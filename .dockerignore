@@ -1,0 +1,16 @@
+# 키는 Secret Manager 로 주입한다. 이미지에 절대 굽지 않는다.
+.env
+*.key
+
+.venv/
+__pycache__/
+*.pyc
+
+# 테스트 산출물·원본 사진 (수십 MB)
+ai/out/
+*.jpg
+*.HEIC
+*.png
+
+CLAUDE.md
+.DS_Store

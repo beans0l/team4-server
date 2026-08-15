@@ -1,0 +1,26 @@
+# 서버 실행에 필요한 것만. 검증 스크립트 전용 의존성(elevenlabs 등)은 뺐다.
+#
+# 🔒 버전을 고정한 이유
+#   Dockerfile 은 이미지를 빌드하는 날의 최신 버전을 받는다. 핀이 없으면 시연 당일
+#   재빌드가 조용히 다른 동작을 할 수 있다. 특히 rembg 는 모델 식별자를 바꾼 전례가
+#   있고, 우리가 쓰는 `isnet-general-use` 가 딱 그런 종류의 문자열이다.
+#   실제로 이 파일을 핀 없이 두 번 설치했더니 google-genai 2.16.0 / 2.17.0,
+#   rembg 2.0.77 / 2.0.78 로 갈렸다.
+#
+#   아래 버전은 실제 Gemini 호출까지 통과한 조합이다.
+#   올릴 때는 반드시 E2E 를 다시 돌리고 이 주석의 날짜를 갱신할 것. (2026-08-13)
+
+fastapi==0.141.1
+uvicorn[standard]==0.52.1
+python-multipart==0.0.32   # multipart 파싱. 빠뜨리면 업로드가 500 으로 죽는다
+
+pillow==12.3.0
+numpy==2.5.2
+scipy==1.18.0              # cutout.py 의 label / binary_fill_holes / gaussian_filter
+rembg==2.0.78              # 사전 누끼 (isnet-general-use)
+onnxruntime==1.28.0        # rembg 추론 백엔드
+
+google-genai==2.17.0       # Gemini
+
+# 결과 PNG 는 서버 디스크에 저장한다(가비아 VM 은 디스크가 영속).
+# 클라우드 오브젝트 스토리지 SDK 는 쓰지 않으므로 의존성도 두지 않는다.
