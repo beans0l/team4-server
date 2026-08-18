@@ -236,6 +236,26 @@ async def run_talk(url: str, wav: Path, soak_sec: float, realtime: bool) -> int:
     return 0
 
 
+def _with_profile(url: str, args) -> str:
+    """--child/--age/--interests/--doll 을 쿼리스트링으로 붙인다.
+
+    한글이 그대로 들어가면 서버에 따라 깨지므로 반드시 percent-encoding 한다.
+    앱(OkHttp)도 같은 방식으로 인코딩해야 한다.
+    """
+    from urllib.parse import urlencode
+
+    fields = {
+        "child": args.child,
+        "age": args.age,
+        "interests": args.interests,
+        "doll": args.doll,
+    }
+    query = urlencode({k: v for k, v in fields.items() if v})
+    if not query:
+        return url
+    return f"{url}{'&' if '?' in url else '?'}{query}"
+
+
 def main() -> int:
     p = argparse.ArgumentParser(description="WS /doll/talk E2E 검증")
     p.add_argument("wav", nargs="?", help="아이 발화 wav (없으면 --protocol-only 만 가능)")
@@ -247,17 +267,25 @@ def main() -> int:
         action="store_true",
         help="오디오를 실시간 속도가 아니라 즉시 전송(디버깅용, 실측값은 못 믿는다)",
     )
+    # 아이 프로필. 앱이 회원가입(이름·나이)과 관심사 입력에서 받아 붙이는 값과
+    # 같은 쿼리 파라미터다. 인형이 실제로 이름을 부르는지 귀로 확인하는 용도.
+    p.add_argument("--child", help="아이 이름 (예: 지우)")
+    p.add_argument("--age", help="아이 나이 (예: 4)")
+    p.add_argument("--interests", help="관심사, 쉼표 구분 (예: 공룡,딸기)")
+    p.add_argument("--doll", help="인형 이름 (예: 초록이)")
     args = p.parse_args()
 
+    url = _with_profile(args.url, args)
+
     if args.protocol_only:
-        return asyncio.run(run_protocol_only(args.url))
+        return asyncio.run(run_protocol_only(url))
 
     if not args.wav:
         p.error("wav 를 주거나 --protocol-only 를 쓸 것")
 
     return asyncio.run(
         run_talk(
-            args.url,
+            url,
             Path(args.wav),
             _parse_duration(args.soak) if args.soak else 0,
             realtime=not args.fast,
