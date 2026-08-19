@@ -6,6 +6,17 @@
 서버가 중계하는 이유는 하나다: **API 키는 서버에만 있어야 한다.** 앱이 Live 를 직접
 부르면 APK 를 뜯어서 키를 꺼낼 수 있고, 크레딧이 $10 뿐이라 유출되면 시연 전에 소진된다.
 
+연결 URL (앱과의 연동 계약):
+
+    /doll/talk?child=지우&age=4&interests=공룡,딸기&doll=초록이
+
+    전부 선택값이다. 없으면 기본 페르소나('초록이', 4살)로 돈다 — 회원가입에
+    이름·나이 필드가 아직 없고 관심사는 나중에 입력하는 값이라, 빈 채로 오는 게
+    정상 경로다. 프로필이 없다고 대화를 거절하면 안 된다.
+
+    아이 정보를 **연결할 때 앱이 실어 보낸다.** 서버가 회원 DB 를 조회하지 않는
+    이유는 server/profile.py 참조.
+
 프레임 규약 (앱과의 연동 계약 — 바꾸려면 앱 파트와 합의):
 
     업   binary  16kHz / 16-bit / mono PCM, 100ms(3200바이트) 청크
@@ -33,6 +44,8 @@ from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 from server import config
 from server.errors import LiveUnavailableError, PipelineError, TalkBusyError
 from server.live import LiveSession
+from server.profile import ChildProfile
+from server.prompts import render_persona
 
 log = logging.getLogger(__name__)
 
@@ -147,10 +160,19 @@ async def talk(ws: WebSocket):
         return
     await _slots.acquire()
 
-    await ws.accept()
-    log.info("대화 시작 — model=%s voice=%s", config.LIVE_MODEL, config.DOLL_VOICE)
+    # 🔐 프로필에는 아이 이름이 들어 있다. 로그에는 safe_repr() 만 남긴다 —
+    #    서버 로그는 팀 전체가 보고 시연 중 화면에 띄우기도 한다.
+    profile = ChildProfile.from_query(ws.query_params)
 
-    session = LiveSession()
+    await ws.accept()
+    log.info(
+        "대화 시작 — model=%s voice=%s %s",
+        config.LIVE_MODEL,
+        config.DOLL_VOICE,
+        profile.safe_repr(),
+    )
+
+    session = LiveSession(persona=render_persona(profile))
     try:
         # 🔴 순서가 중요하다. 다운링크가 Live 연결을 여는 주체이므로 **먼저** 띄우고,
         #    연결이 설 때까지 기다린 뒤에 업링크를 시작한다.

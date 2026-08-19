@@ -27,7 +27,7 @@ ai/doll_stylize_test.py 의 ACTIVE_PROMPT 다. 검증 스크립트도 같은 이
 import json
 import logging
 
-from ai.dialog_test import DOLL_PERSONA as DEFAULT_PERSONA
+from ai.dialog_test import PERSONA_BASE, build_persona
 from ai.doll_stylize_test import ACTIVE_PROMPT
 from ai.sprite_test import OPTIONAL_SPRITE_PROMPTS, SPRITE_PROMPTS
 from server import config
@@ -104,13 +104,17 @@ def load_sprite_prompts() -> tuple[dict[str, str], str]:
 
 
 def load_persona() -> tuple[str, str]:
-    """인형 페르소나. (프롬프트, 출처).
+    """인형 페르소나의 **공통 부분**. (프롬프트, 출처).
+
+    아이마다 달라지는 값(이름·나이·관심사)은 여기 없다 — 이건 서버 기동 시 한 번만
+    읽히는 값이라, 아이별 값을 넣으면 첫 번째 아이의 이름이 모두에게 불린다.
+    세션마다 render_persona() 가 프로필 블록을 붙인다.
 
     Live API 는 이걸 system_instruction 으로 받는다. **빠뜨리면 페르소나가 통째로
     무시된다** — 실측에서 `저는 유치원에 다니지 않아서...` 같은 존댓말 어시스턴트
     톤이 나왔다. 반말로 친구처럼 말하는 인형이 아니라 상담원이 되는 것이다.
 
-    기본값의 단일 출처는 ai/dialog_test.py 의 DOLL_PERSONA 다. 스타일 프롬프트와
+    기본값의 단일 출처는 ai/dialog_test.py 의 PERSONA_BASE 다. 스타일 프롬프트와
     같은 이유로 여기에 복사하지 않는다 — 과제 4 를 재측정할 때 스크립트가 돌리는
     문장과 서버가 쓰는 문장이 같아야 실측값을 믿을 수 있다.
     """
@@ -124,12 +128,37 @@ def load_persona() -> tuple[str, str]:
             return text, f"file:{path.name}"
         log.warning("%s 가 비어 있어 기본 페르소나를 쓴다", path)
 
-    return DEFAULT_PERSONA, "default:DOLL_PERSONA"
+    return PERSONA_BASE, "default:PERSONA_BASE"
+
+
+def render_persona(profile=None) -> str:
+    """이 세션에 쓸 페르소나 전문. 대화 연결마다 호출된다.
+
+    profile 이 비어 있어도 정상이다 — 기본값('초록이', 4살)으로 채워진다.
+    회원가입 필드가 앱에 아직 없고, 있더라도 관심사는 나중에 입력하는 값이라
+    빈 채로 오는 게 정상 경로다. 프로필이 없다고 대화를 거절하면 안 된다.
+
+    🔐 반환값에는 아이 이름이 들어 있다. **로그에 찍지 말 것.**
+    """
+    if profile is None:
+        return build_persona(base=PERSONA_BASE_TEXT)
+    return build_persona(
+        base=PERSONA_BASE_TEXT,
+        doll_name=profile.doll_name,
+        child_name=profile.child_name,
+        child_age=profile.child_age,
+        interests=profile.interests,
+    )
 
 
 STYLIZE_PROMPT, STYLIZE_PROMPT_SOURCE = load_stylize_prompt()
 SPRITE_PROMPT_SET, SPRITE_PROMPT_SOURCE = load_sprite_prompts()
-DOLL_PERSONA, DOLL_PERSONA_SOURCE = load_persona()
+
+# ⚠️ 이건 페르소나 **전문이 아니라 공통 부분**이다. system_instruction 으로 그대로
+#    넘기면 인형 이름과 아이 나이가 빠진다. 반드시 render_persona() 를 거칠 것.
+#    이름을 DOLL_PERSONA 로 두면 그 실수를 유발하므로 일부러 바꿔 두었다.
+PERSONA_BASE_TEXT, DOLL_PERSONA_SOURCE = load_persona()
+DOLL_PERSONA = PERSONA_BASE_TEXT  # 하위 호환. 새 코드에서는 쓰지 말 것.
 
 # base 스프라이트의 이름. 앱과의 계약이다 — sprites[0] 이 항상 이것이다.
 BASE_SPRITE = "mouth_closed"
@@ -142,7 +171,8 @@ __all__ = [
     "SPRITE_PROMPT_SOURCE",
     "load_sprite_prompts",
     "BASE_SPRITE",
-    "DOLL_PERSONA",
+    "PERSONA_BASE_TEXT",
     "DOLL_PERSONA_SOURCE",
     "load_persona",
+    "render_persona",
 ]

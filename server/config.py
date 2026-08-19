@@ -48,9 +48,7 @@ GEMINI_MODEL = os.environ.get("GEMINI_MODEL", "gemini-3.1-flash-image")
 GEMINI_ATTEMPTS = _int("GEMINI_ATTEMPTS", 3)
 
 # --- 대화 (Live API) ------------------------------------------------------
-# 음성↔음성 단일 연결. 과제 4 실측에서 TTFB 0.85초로, 3단 조립(STT→LLM→TTS,
-# 2.71~5.38초)보다 3배 빨라 채택했다. 아이는 1초 넘는 침묵을 "인형이 죽었다"로
-# 받아들이므로 이 격차가 결정적이다.
+# 음성↔음성 단일 연결. 과제 4 실측에서 TTFB 0.85초로, 3단 조립(STT→LLM→TTS = 2.71~5.38초)
 # ⚠️ REST 로는 대체 불가능하다. 모델을 바꾸려면 Live 를 지원하는 모델이어야 한다.
 LIVE_MODEL = os.environ.get("LIVE_MODEL", "gemini-3.1-flash-live-preview")
 

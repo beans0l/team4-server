@@ -29,7 +29,7 @@ from contextlib import AsyncExitStack
 from ai.tts_test import _gemini_client
 from server import config
 from server.errors import LiveUnavailableError
-from server.prompts import DOLL_PERSONA
+from server.prompts import render_persona
 
 log = logging.getLogger(__name__)
 
@@ -42,8 +42,12 @@ def _backoff(attempt: int) -> float:
     return _BACKOFF_SEC[min(attempt, len(_BACKOFF_SEC)) - 1]
 
 
-def _live_config():
-    """LiveConnectConfig. path_c_async() 와 같은 값이어야 실측 지연이 재현된다."""
+def _live_config(persona: str):
+    """LiveConnectConfig. path_c_async() 와 같은 값이어야 실측 지연이 재현된다.
+
+    persona 는 세션마다 다르다(아이 이름·나이·관심사가 들어 있다). 모듈 상수로
+    두면 안 된다 — 서버 기동 시 한 번 읽힌 값이 모든 아이에게 쓰인다.
+    """
     from google.genai import types
 
     return types.LiveConnectConfig(
@@ -56,7 +60,7 @@ def _live_config():
             )
         ),
         # ② 빠뜨리면 페르소나가 무시된다. 문자열이 아니라 Content 로 넘겨야 한다.
-        system_instruction=types.Content(parts=[types.Part(text=DOLL_PERSONA)]),
+        system_instruction=types.Content(parts=[types.Part(text=persona)]),
         # ③ 립싱크·로깅용. 인형이 한 말을 텍스트로도 받는다.
         output_audio_transcription=types.AudioTranscriptionConfig(),
         # ① 자동 VAD 를 끄고 앱의 수동 신호를 쓴다.
@@ -135,8 +139,13 @@ class LiveSession:
     세션이 두 개가 된다(그리고 둘 다 과금된다).
     """
 
-    def __init__(self):
+    def __init__(self, persona: str | None = None):
         self._client = _gemini_client()
+        # 🔴 인스턴스에 보관해야 한다. _open() 은 재연결마다 다시 불리는데, 지역변수로
+        #    두면 **재연결 후 인형이 아이 이름을 잊는다.** session_reset 으로 대화
+        #    맥락이 날아가는 건 앱도 아는 정상 동작이지만, 이름까지 잃으면 아이
+        #    입장에서는 인형이 딴 사람이 된 것처럼 보인다.
+        self._persona = persona or render_persona()
         self._stack: AsyncExitStack | None = None
         self._session = None
         # 연결이 살아 있는 동안만 set. 재연결 중에 들어온 오디오는 여기서 걸러 버린다.
@@ -149,7 +158,7 @@ class LiveSession:
         stack = AsyncExitStack()
         self._session = await stack.enter_async_context(
             self._client.aio.live.connect(
-                model=config.LIVE_MODEL, config=_live_config()
+                model=config.LIVE_MODEL, config=_live_config(self._persona)
             )
         )
         self._stack = stack
