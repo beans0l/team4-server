@@ -77,14 +77,14 @@ class FindAccountRequest(BaseModel):
 
 
 class ResetPasswordRequest(BaseModel):
-    account: str
+    username: str
     email: str
     new_password: str
     new_password_confirm: str
 
 
 def _insert_user(
-    account: str,
+    username: str,
     password_hash: str,
     email: str,
     name: str,
@@ -96,7 +96,7 @@ def _insert_user(
         cur.execute(
             "INSERT INTO users (account, password_hash, email, name, age, keyword) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
-            (account, password_hash, email, name, age, keyword),
+            (username, password_hash, email, name, age, keyword),
         )
         # lastrowid 는 커서에 딸린 값이라 with 블록을 벗어나면 못 읽는다.
         return cur.lastrowid
@@ -170,8 +170,7 @@ async def signup(body: SignupRequest) -> dict:
     # 🔴 204(본문 없음)로 두면 앱이 가입 직후 로그인 화면으로 되돌아가야 한다.
     #    가입 성공은 "방금 본인이 만든 자격증명을 알고 있다"가 증명된 상태이므로
     #    login 과 똑같은 토큰을 여기서 바로 발급한다.
-    token = await asyncio.to_thread(_make_token, user_id, body.username)
-    return {"token": token, "user_id": user_id}
+    return {"response" : "로그인 성공"}
 
 
 @router.post("/api/auth/login")
