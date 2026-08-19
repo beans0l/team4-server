@@ -8,14 +8,23 @@
 
 연결 URL (앱과의 연동 계약):
 
-    /doll/talk?child=지우&age=4&interests=공룡,딸기&doll=초록이
+    /doll/talk?token=<로그인 JWT>&child=지우&age=4&interests=공룡,딸기&doll=초록이
 
-    전부 선택값이다. 없으면 기본 페르소나('초록이', 4살)로 돈다 — 회원가입에
-    이름·나이 필드가 아직 없고 관심사는 나중에 입력하는 값이라, 빈 채로 오는 게
-    정상 경로다. 프로필이 없다고 대화를 거절하면 안 된다.
+    🔴 token 은 필수다 — 없거나 유효하지 않으면 즉시 거절한다(아래 실패 표).
+    핸드셰이크에 커스텀 헤더를 못 싣는 WS 클라이언트도 있어서, HTTP 라우트들처럼
+    Authorization 헤더가 아니라 다른 필드와 같은 방식(쿼리파라미터)으로 받는다.
+
+    child/age/interests/doll 은 전부 선택값이다. 없으면 기본 페르소나('초록이', 4살)로
+    돈다 — 회원가입에 이름·나이 필드가 아직 없고 관심사는 나중에 입력하는 값이라, 빈
+    채로 오는 게 정상 경로다. 프로필이 없다고 대화를 거절하면 안 된다.
 
     아이 정보를 **연결할 때 앱이 실어 보낸다.** 서버가 회원 DB 를 조회하지 않는
-    이유는 server/profile.py 참조.
+    이유는 server/profile.py 참조 — token 으로 얻는 user_id 는 대화 기록을
+    저장할 때만 쓰고(아래), 페르소나 구성에는 안 쓴다.
+
+    세션이 끝나면(정상 종료·오류 모두) user_id·인형이 한 말(턴 단위)·시작/종료 시각을
+    talk_sessions 테이블에 기록한다. 아이 쪽 음성은 텍스트로 전사되지 않으므로
+    저장되는 대화 내용은 인형 발화뿐이다.
 
 프레임 규약 (앱과의 연동 계약 — 바꾸려면 앱 파트와 합의):
 
@@ -38,11 +47,13 @@
 import asyncio
 import json
 import logging
+from datetime import datetime
 
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
-from server import config
-from server.errors import LiveUnavailableError, PipelineError, TalkBusyError
+from server import config, db
+from server.deps import get_user_id_from_token
+from server.errors import LiveUnavailableError, PipelineError, TalkBusyError, UnauthorizedError
 from server.live import LiveSession
 from server.profile import ChildProfile
 from server.prompts import render_persona
@@ -59,6 +70,18 @@ _slots = asyncio.Semaphore(config.MAX_TALK_SESSIONS)
 _CLOSE_NORMAL = 1000
 _CLOSE_INTERNAL = 1011
 _CLOSE_TRY_LATER = 1013
+_CLOSE_UNAUTHORIZED = 1008  # policy violation
+
+
+def _save_talk_session(
+    user_id: int, transcript: list[str], started_at: datetime, ended_at: datetime
+) -> None:
+    with db.get_cursor() as cur:
+        cur.execute(
+            "INSERT INTO talk_sessions (user_id, transcript, started_at, ended_at) "
+            "VALUES (%s, %s, %s, %s)",
+            (user_id, json.dumps(transcript, ensure_ascii=False), started_at, ended_at),
+        )
 
 
 async def _send_error(ws: WebSocket, exc: PipelineError) -> None:
@@ -116,27 +139,51 @@ async def _uplink(ws: WebSocket, session: LiveSession) -> None:
             log.warning("알 수 없는 제어 프레임 무시: %s", kind)
 
 
-async def _downlink(ws: WebSocket, session: LiveSession) -> None:
-    """Gemini -> 앱."""
+async def _downlink(ws: WebSocket, session: LiveSession, transcript: list[str]) -> None:
+    """Gemini -> 앱.
+
+    transcript 프레임은 한 턴을 여러 조각으로 나눠 보낸다(README 참조). turn_complete
+    가 와야 한 턴이 끝난 것이므로, 그때 조각을 이어붙여 transcript(DB 저장용)에 쌓는다.
+    """
+    turn_buf: list[str] = []
     async for kind, payload in session.events():
         try:
             if kind == "audio":
                 await ws.send_bytes(payload)
             elif kind == "transcript":
+                turn_buf.append(payload)
                 await ws.send_json({"type": "transcript", "text": payload})
             else:
                 # turn_complete / session_reset
+                if kind == "turn_complete" and turn_buf:
+                    transcript.append("".join(turn_buf))
+                    turn_buf.clear()
                 await ws.send_json({"type": kind})
         except (WebSocketDisconnect, RuntimeError) as e:
             # 앱이 먼저 끊었다. 보통은 _uplink 가 먼저 알아채지만, 인형이 말하는
             # 도중에 끊기면 이쪽이 먼저 걸린다. 정상 종료다 — 스택트레이스를
             # 남기면 진짜 오류와 구분이 안 된다.
+            if turn_buf:
+                transcript.append("".join(turn_buf))  # 미완성 턴이라도 버리지 않는다
             log.info("다운링크 종료 — 앱 연결이 이미 닫힘: %s", e)
             return
 
 
 @router.websocket("/doll/talk")
 async def talk(ws: WebSocket):
+    # 인증을 가장 먼저 본다 — 로그인 안 한 요청에는 API 키 유무나 세션 혼잡도 같은
+    # 서버 상태를 알려줄 이유가 없고, 뒤에 오는 Live 연결·세마포어 점유도 아낀다.
+    # 토큰은 헤더가 아니라 쿼리파라미터로 받는다: 핸드셰이크에 커스텀 헤더를 못
+    # 싣는 WS 클라이언트가 있어서 나머지(child/age/...)와 같은 방식으로 통일했다.
+    try:
+        user_id = get_user_id_from_token(ws.query_params.get("token"))
+    except UnauthorizedError as e:
+        await ws.accept()
+        await _send_error(ws, e)
+        await _close(ws, _CLOSE_UNAUTHORIZED)
+        log.warning("대화 요청 거절 — 인증 실패: %s", e.detail)
+        return
+
     # 키 확인은 accept 전에. 없으면 Live 연결이 100% 실패하므로 붙기 전에 거절한다.
     # 다만 **accept 는 해야 error 프레임을 보낼 수 있다** — accept 하지 않고 닫으면
     # 앱에는 HTTP 403 만 보이고 code 를 못 읽는다.
@@ -173,6 +220,8 @@ async def talk(ws: WebSocket):
     )
 
     session = LiveSession(persona=render_persona(profile))
+    transcript: list[str] = []
+    started_at = datetime.now()
     try:
         # 🔴 순서가 중요하다. 다운링크가 Live 연결을 여는 주체이므로 **먼저** 띄우고,
         #    연결이 설 때까지 기다린 뒤에 업링크를 시작한다.
@@ -185,7 +234,7 @@ async def talk(ws: WebSocket):
         #
         #    이 동안 앱이 보낸 프레임은 소켓 버퍼에 쌓였다가 순서대로 읽힌다 —
         #    읽는 시점만 늦출 뿐 잃지 않는다.
-        down = asyncio.create_task(_downlink(ws, session), name="talk-downlink")
+        down = asyncio.create_task(_downlink(ws, session, transcript), name="talk-downlink")
         ready = asyncio.create_task(
             session.wait_ready(config.LIVE_CONNECT_TIMEOUT_SEC), name="talk-ready"
         )
@@ -232,4 +281,11 @@ async def talk(ws: WebSocket):
     finally:
         # 🔴 순서가 중요하다. Live 를 먼저 닫아야 크레딧이 멎는다.
         await session.close()
+        try:
+            await asyncio.to_thread(
+                _save_talk_session, user_id, transcript, started_at, datetime.now()
+            )
+        except Exception:
+            # 대화 자체는 이미 끝났다. 기록 실패로 앱에 에러를 보여줄 이유는 없다.
+            log.exception("대화 기록 저장 실패 — user_id=%d", user_id)
         _slots.release()

@@ -45,3 +45,16 @@ CREATE TABLE IF NOT EXISTS meals (
     CONSTRAINT fk_meals_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE,
     CONSTRAINT fk_meals_friend FOREIGN KEY (friend_id) REFERENCES friends (id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- WS /doll/talk 세션 1건 = 1행. transcript 는 turn_complete 마다 확정된
+-- 인형 발화(turn)를 담은 JSON 배열(["...", "..."])이다 — 아이 쪽 발화는
+-- 텍스트로 전사되지 않으므로(README 프레임 규약 참조) 여기 포함되지 않는다.
+-- 연결이 끊기면(정상 종료든 오류든) ended_at 과 그때까지의 transcript 로 갱신한다.
+CREATE TABLE IF NOT EXISTS talk_sessions (
+    id          INT AUTO_INCREMENT PRIMARY KEY,
+    user_id     INT NOT NULL,
+    transcript  JSON NOT NULL,
+    started_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    ended_at    TIMESTAMP NULL DEFAULT NULL,
+    CONSTRAINT fk_talk_sessions_user FOREIGN KEY (user_id) REFERENCES users (id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

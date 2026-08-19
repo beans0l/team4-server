@@ -11,9 +11,10 @@
 import asyncio
 import logging
 
-from fastapi import APIRouter, File, Request, UploadFile
+from fastapi import APIRouter, Depends, File, Request, UploadFile
 
 from server import config, runtime, storage
+from server.deps import get_current_user_id
 from server.errors import InvalidImageError
 from server.prompts import BASE_SPRITE
 
@@ -33,7 +34,15 @@ def _sorted_names(names) -> list[str]:
 
 
 @router.post("/doll/stylize")
-async def stylize(request: Request, image: UploadFile = File(...)):
+async def stylize(
+    request: Request,
+    image: UploadFile = File(...),
+    user_id: int = Depends(get_current_user_id),
+):
+    # user_id 는 지금은 인증 게이트 역할만 한다(비용이 드는 Gemini 호출을
+    # 로그인한 사용자로 제한). 사용자별 호출 횟수 제한이 필요해지면 여기서
+    # 카운트하면 된다.
+    log.info("변환 요청 — user_id=%d", user_id)
     data = await image.read()
     if not data:
         raise InvalidImageError("빈 파일")

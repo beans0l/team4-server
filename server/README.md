@@ -100,7 +100,11 @@ base 10초 + 변형 4장 병렬 13초 ≈ 28초다. 변형을 순차로 하면 5
 
 ### `POST /doll/stylize`
 
+> 🔴 **로그인 필요.** `Authorization: Bearer <JWT>` 없이 부르면 401 `UNAUTHORIZED`.
+> 호출 1건이 최대 325원이라, 익명으로 열어두면 아무나 크레딧을 쓸 수 있었다.
+
 ```
+Authorization: Bearer <로그인 때 받은 토큰>
 Content-Type: multipart/form-data
   image = 촬영 jpg/png (10MB 이하)
 ```
@@ -154,6 +158,7 @@ Content-Type: multipart/form-data
 
 | HTTP | `code` | 뜻 | 앱에서 |
 |---|---|---|---|
+| 401 | `UNAUTHORIZED` | 토큰 없음·만료·위조 | 로그인 화면으로 |
 | 400 | `INVALID_IMAGE` | 디코딩 실패 · 용량 초과 | "다시 촬영해 주세요" |
 | 429 | `QUOTA_EXHAUSTED` | **크레딧 소진** | 앱엔 숨기고 일반 오류로 |
 | 503 | `MISSING_API_KEY` | 서버에 키가 없음 — **설정 실수** | 서버의 `.env` 확인 |
@@ -173,6 +178,20 @@ Android ──WS──> 이 서버 ──WS──> Gemini Live API
 **REST 로는 안 된다.** 아이가 말을 마친 뒤 인형의 첫 소리까지 걸리는 시간을 재보면
 Live 는 0.85초, STT→LLM→TTS 조립은 2.71~5.38초다. 아이는 1초 넘는 침묵을
 "인형이 죽었다"로 받아들이므로 이 격차가 결정적이다.
+
+**연결 URL**
+
+```
+wss://<도메인>/doll/talk?token=<로그인 JWT>&child=지우&age=4&interests=공룡,딸기&doll=초록이
+```
+
+🔴 **로그인 필요.** `token` 이 없거나 유효하지 않으면 즉시 거절한다(아래 실패 표).
+WS 핸드셰이크는 커스텀 헤더를 못 싣는 클라이언트가 있어 `Authorization` 헤더가 아니라
+쿼리파라미터로 받는다 — HTTP 라우트들과 다른 방식이니 주의할 것.
+`child`/`age`/`interests`/`doll`은 그대로 전부 선택값이다.
+
+세션이 끝나면 user_id·인형이 한 말(턴 단위)·시작/종료 시각이 `talk_sessions` 테이블에
+남는다. 아이 쪽 음성은 텍스트로 전사되지 않으므로 저장되는 건 인형 발화뿐이다.
 
 **프레임 규약** — 바이너리는 오디오, 텍스트는 제어다.
 
@@ -201,6 +220,7 @@ Live 는 0.85초, STT→LLM→TTS 조립은 2.71~5.38초다. 아이는 1초 넘�
 
 | `code` | 뜻 | close code | 앱에서 |
 |---|---|---|---|
+| `UNAUTHORIZED` | `token` 없음·만료·위조 | 1008 | 로그인 화면으로 |
 | `TALK_BUSY` | 동시 대화 한도(기본 2) 초과 | 1013 | "잠시 후 다시" — 재시도 가능 |
 | `LIVE_UNAVAILABLE` | Live 연결 실패(키 누락·크레딧 소진·네트워크) | 1011 | 대화 종료, `MainHome` 으로 |
 
@@ -541,25 +561,28 @@ curl https://<도메인>/healthz
 `api_key` 가 `false` 면 `.env` 가 컨테이너에 안 들어간 것이다. `rembg` 가 `loaded` 가
 아니면 워밍업이 실패한 것이고, 첫 요청이 그만큼 느려진다.
 
-실제 변환까지 확인:
+실제 변환까지 확인 — 🔴 `/doll/stylize` 도 이제 로그인이 필요하다:
 
 ```bash
-curl -F image=@doll.jpg https://<도메인>/doll/stylize
+TOKEN=$(curl -s -X POST https://<도메인>/api/auth/login -H "Content-Type: application/json" \
+  -d '{"account":"...","password":"..."}' | python -c "import json,sys;print(json.load(sys.stdin)['token'])")
+
+curl -F image=@doll.jpg https://<도메인>/doll/stylize -H "Authorization: Bearer $TOKEN"
 # sprites[0] 가 https:// 로 시작하는지 반드시 확인할 것 (⑥)
 ```
 
 **대화(WS)는 curl 로 확인할 수 없다.** `ai/talk_client.py` 를 쓴다 — 앱이 하는 일을
-그대로 흉내내는 클라이언트다.
+그대로 흉내내는 클라이언트다. 여기도 `--token`(위에서 받은 것과 동일)이 필수다.
 
 ```bash
 # ① 배선만 (오디오를 안 보내므로 사실상 무료)
-.venv/bin/python -m ai.talk_client --protocol-only --url wss://<도메인>/doll/talk
+.venv/bin/python -m ai.talk_client --protocol-only --url wss://<도메인>/doll/talk --token $TOKEN
 
 # ② 실제 왕복 — 인형이 대답하고 TTFB 가 나온다
-.venv/bin/python -m ai.talk_client ai/out/dialog/child_draw.wav --url wss://<도메인>/doll/talk
+.venv/bin/python -m ai.talk_client ai/out/dialog/child_draw.wav --url wss://<도메인>/doll/talk --token $TOKEN
 
 # ③ 18분 소크 — Live 비용(R5)과 세션 한계를 동시에 잰다. 크레딧을 많이 쓴다
-.venv/bin/python -m ai.talk_client ai/out/dialog/child_draw.wav --soak 18m --url wss://...
+.venv/bin/python -m ai.talk_client ai/out/dialog/child_draw.wav --soak 18m --url wss://... --token $TOKEN
 ```
 
 `wss://` 다. 앱이 `targetSdk 37` 이라 평문은 어차피 차단된다.

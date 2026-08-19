@@ -6,14 +6,20 @@
     # 서버를 먼저 띄운다
     ../.venv/bin/python -m uvicorn server.main:app --port 8000
 
+    # 🔴 /doll/talk 는 로그인이 필요하다. 먼저 토큰을 받는다:
+    #   curl -X POST localhost:8000/api/auth/login -H "Content-Type: application/json" \
+    #     -d '{"account":"...","password":"..."}'
+    # 아래 모든 예시에 --token <받은 토큰> 을 붙여야 한다. 없으면 UNAUTHORIZED 로
+    # 즉시 거절된다 — ①(--protocol-only)도 예외 아니다.
+
     # ① 프로토콜 배선만 (오디오를 안 보내므로 사실상 무료)
-    ../.venv/bin/python -m ai.talk_client --protocol-only
+    ../.venv/bin/python -m ai.talk_client --protocol-only --token <TOKEN>
 
     # ② 단발 왕복 — TTFB 가 dialog_test 실측(0.85초)과 맞는지
-    ../.venv/bin/python -m ai.talk_client ai/out/dialog/child_draw.wav
+    ../.venv/bin/python -m ai.talk_client ai/out/dialog/child_draw.wav --token <TOKEN>
 
     # ③ 장시간 세션 — R5(Live 비용) + 세션 한계를 한 번에 잰다
-    ../.venv/bin/python -m ai.talk_client ai/out/dialog/child_draw.wav --soak 18m
+    ../.venv/bin/python -m ai.talk_client ai/out/dialog/child_draw.wav --soak 18m --token <TOKEN>
 
 ⚠️ ②③ 은 실제 Gemini 크레딧을 쓴다. 무료 크레딧이 $10 뿐이고 R5 가 미측정이라
    ③ 은 하루에 한 번으로 족하다. 스프라이트 실호출과 같은 날 몰아 하지 말 것.
@@ -237,7 +243,7 @@ async def run_talk(url: str, wav: Path, soak_sec: float, realtime: bool) -> int:
 
 
 def _with_profile(url: str, args) -> str:
-    """--child/--age/--interests/--doll 을 쿼리스트링으로 붙인다.
+    """--token/--child/--age/--interests/--doll 을 쿼리스트링으로 붙인다.
 
     한글이 그대로 들어가면 서버에 따라 깨지므로 반드시 percent-encoding 한다.
     앱(OkHttp)도 같은 방식으로 인코딩해야 한다.
@@ -245,6 +251,7 @@ def _with_profile(url: str, args) -> str:
     from urllib.parse import urlencode
 
     fields = {
+        "token": args.token,
         "child": args.child,
         "age": args.age,
         "interests": args.interests,
@@ -260,6 +267,9 @@ def main() -> int:
     p = argparse.ArgumentParser(description="WS /doll/talk E2E 검증")
     p.add_argument("wav", nargs="?", help="아이 발화 wav (없으면 --protocol-only 만 가능)")
     p.add_argument("--url", default=DEFAULT_URL)
+    p.add_argument(
+        "--token", required=True, help="로그인 JWT (필수 — 없으면 UNAUTHORIZED 로 즉시 거절)"
+    )
     p.add_argument("--protocol-only", action="store_true", help="Live 호출 없이 규약만 확인(무료)")
     p.add_argument("--soak", help="장시간 세션. 예: 18m")
     p.add_argument(
