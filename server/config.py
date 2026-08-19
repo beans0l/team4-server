@@ -150,6 +150,20 @@ DOLL_PERSONA_FILE = Path(
     os.environ.get("DOLL_PERSONA_FILE", ROOT / "prompts" / "persona.txt")
 )
 
+# --- MySQL ------------------------------------------------------------
+DB_HOST = os.environ.get("DB_HOST", "localhost")
+DB_PORT = _int("DB_PORT", 3306)
+DB_NAME = os.environ.get("DB_NAME", "")
+DB_USER = os.environ.get("DB_USER", "")
+DB_PASSWORD = os.environ.get("DB_PASSWORD", "")
+
+# --- JWT ------------------------------------------------------------------
+# 로그인 토큰 서명 키. .env 에서 반드시 랜덤한 값으로 채울 것 — 비어 있으면
+# 누구나 빈 문자열로 서명해 토큰을 위조할 수 있다.
+JWT_SECRET = os.environ.get("JWT_SECRET", "")
+JWT_ALGORITHM = "HS256"
+JWT_EXPIRE_MINUTES = _int("JWT_EXPIRE_MINUTES", 60 * 24)  # 기본 24시간
+
 # --- 저장소 ---------------------------------------------------------------
 # 결과 PNG 는 서버 디스크에 쓰고 /files 로 직접 서빙한다.
 # 가비아 VM 은 디스크가 영속이라 이게 정상 운영 방식이다.

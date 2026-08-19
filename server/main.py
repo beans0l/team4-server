@@ -22,7 +22,7 @@ from server.prompts import (
     SPRITE_PROMPT_SOURCE,
     STYLIZE_PROMPT_SOURCE,
 )
-from server.routes import stylize, talk
+from server.routes import auth, friends, goal_tags, meals, stylize, talk, users
 
 logging.basicConfig(
     level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s | %(message)s"
@@ -55,14 +55,24 @@ async def lifespan(app: FastAPI):
             "GEMINI_API_KEY 가 없습니다. 모든 변환 요청이 503 으로, 대화 연결은 "
             "LIVE_UNAVAILABLE 로 실패합니다. 서버의 .env 파일을 확인하세요."
         )
+    if not config.JWT_SECRET:
+        log.error(
+            "JWT_SECRET 이 없습니다. 빈 문자열로 토큰을 서명하게 되어 누구나 "
+            "위조할 수 있습니다. 서버의 .env 파일에 랜덤한 값을 넣으세요."
+        )
     await runtime.warmup()
     yield
 
 
 app = FastAPI(title="Doll AI Server", lifespan=lifespan)
 
+app.include_router(auth.router)
+app.include_router(friends.router)
+app.include_router(goal_tags.router)
+app.include_router(meals.router)
 app.include_router(stylize.router)
 app.include_router(talk.router)
+app.include_router(users.router)
 
 # 결과 PNG 서빙. 앱이 sprites[0] URL 로 여기에 직접 접근한다.
 # 마운트 전에 디렉토리를 만들어야 한다 — StaticFiles 는 없는 경로에 대해
@@ -100,10 +110,21 @@ async def _validation_error(request: Request, exc: RequestValidationError):
     """FastAPI 기본 422 는 {"detail": [...]} 라서 code 가 없다.
 
     연동 규약상 호출하는 쪽은 code 만 보고 분기하므로, 필드명을 잘못 보냈을 때
-    파싱할 수 없는 응답이 나가면 안 된다. 400 INVALID_IMAGE 로 맞춰 준다.
+    파싱할 수 없는 응답이 나가면 안 된다. 400 으로 맞춰 준다.
+
+    /doll/stylize 는 image 필드 하나만 받으므로 그 실패는 기존처럼 INVALID_IMAGE
+    로 응답한다. 그 외 라우트(auth/friends/goal-tags/meals/users)의 검증 실패까지
+    "사진이 첨부되지 않았어요"로 답하면 회원가입 필드 누락 같은 것도 이미지
+    문제로 잘못 안내하게 되므로 일반 VALIDATION_ERROR 로 분리한다.
     """
-    log.warning("요청 형식 오류: %s", exc.errors())
-    return _error(400, "INVALID_IMAGE", "사진이 첨부되지 않았어요. (필드명: image)")
+    errors = exc.errors()
+    log.warning("요청 형식 오류: %s", errors)
+    if any(err["loc"] and err["loc"][-1] == "image" for err in errors):
+        return _error(400, "INVALID_IMAGE", "사진이 첨부되지 않았어요. (필드명: image)")
+    fields = ", ".join(
+        ".".join(str(p) for p in err["loc"] if p != "body") for err in errors
+    )
+    return _error(400, "VALIDATION_ERROR", f"입력값을 확인해 주세요. ({fields})")
 
 
 @app.exception_handler(PipelineError)

@@ -1,0 +1,57 @@
+# 가비아 VM 배포용. 앱 컨테이너 + MySQL 컨테이너를 한 네트워크로 묶는다.
+#
+#   docker compose up -d --build
+#
+# server/README.md 배포③(docker build/run) 을 대체한다 — MySQL 을 직접 설치하지
+# 않고, 이미지 저장(/data/doll-sprites)과 같은 방식으로 볼륨에 영속화한다.
+#
+# ⚠️ .env 의 DB_USER 는 root 면 안 된다. mysql 공식 이미지는 MYSQL_USER=root 를
+#    거부한다("MYSQL_USER='root' ... will not be used for the root user"). 배포
+#    전에 .env 에 애플리케이션 전용 계정(예: DB_USER=doll_app)과 비밀번호를 넣을 것 —
+#    로컬 개발에서 편의상 쓰던 root 계정을 그대로 배포에 가져오지 않는다.
+
+services:
+  db:
+    image: mysql:8.4
+    restart: always
+    environment:
+      MYSQL_RANDOM_ROOT_PASSWORD: "yes"   # root 비밀번호는 앱이 쓰지 않으므로 무작위로 둔다
+      MYSQL_DATABASE: ${DB_NAME}
+      MYSQL_USER: ${DB_USER}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
+    volumes:
+      - mysql-data:/var/lib/mysql
+      # 최초 기동(데이터 볼륨이 비어 있을 때) 한 번만 실행돼 테이블을 만든다.
+      # 이미 데이터가 있는 볼륨을 재사용하면 다시 실행되지 않는다.
+      - ./server/schema.sql:/docker-entrypoint-initdb.d/schema.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "${DB_USER}", "-p${DB_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  app:
+    build: .
+    restart: always
+    depends_on:
+      db:
+        condition: service_healthy
+    env_file:
+      - .env
+    environment:
+      # DB_HOST 는 .env 의 localhost 값(로컬 개발용)을 덮어써서 컨테이너 네트워크의
+      # 서비스명("db")을 쓰게 한다 — 비밀번호 같은 값이 아니라서 .env 에 안 넣는다.
+      DB_HOST: db
+      DB_PORT: 3306
+      LOCAL_STORAGE_DIR: /data/doll-sprites
+      MAX_CONCURRENCY: 2
+    ports:
+      # README 배포③과 동일한 이유로 127.0.0.1 에만 바인딩한다 — nginx 를 거치지
+      # 않고 8080 이 인터넷에 그대로 열리는 것을 막는다.
+      - "127.0.0.1:8080:8080"
+    volumes:
+      - doll-sprites:/data/doll-sprites
+
+volumes:
+  mysql-data:
+  doll-sprites:

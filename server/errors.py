@@ -81,6 +81,96 @@ class GeminiTimeoutError(PipelineError):
 
 
 # ---------------------------------------------------------------------------
+# 회원가입 (POST /auth/signup)
+# ---------------------------------------------------------------------------
+class PasswordMismatchError(PipelineError):
+    code = "PASSWORD_MISMATCH"
+    status = 400
+    message = "비밀번호가 일치하지 않아요."
+
+
+class DuplicateUserError(PipelineError):
+    """username 또는 email UNIQUE 제약 위반. 어느 쪽이 겹쳤는지는 구분하지 않는다.
+
+    구분해서 알려주면 공격자가 어떤 아이디가 이미 가입돼 있는지 추측할 수 있다
+    (계정 존재 여부 열거).
+    """
+
+    code = "DUPLICATE_USER"
+    status = 409
+    message = "이미 가입된 아이디 또는 이메일이에요."
+
+
+class InvalidCredentialsError(PipelineError):
+    """아이디가 없거나 비밀번호가 틀렸다. 둘을 구분해서 응답하지 않는다.
+
+    "아이디 없음"과 "비밀번호 틀림"을 구분해서 주면 존재하는 아이디를 공격자가
+    걸러낼 수 있다(계정 존재 여부 열거). 항상 같은 코드/메시지로 응답한다.
+    """
+
+    code = "INVALID_CREDENTIALS"
+    status = 401
+    message = "아이디 또는 비밀번호가 올바르지 않아요."
+
+
+class CurrentPasswordRequiredError(PipelineError):
+    """계정 아이디/비밀번호를 바꾸는 요청인데 current_password 가 없다.
+
+    "비밀번호 틀림"(401)과는 다른 실수다 — 여긴 아예 안 보냈거나 빈 값인
+    경우라 400 으로 구분한다.
+    """
+
+    code = "CURRENT_PASSWORD_REQUIRED"
+    status = 400
+    message = "계정 정보를 바꾸려면 현재 비밀번호를 입력해야 해요."
+
+
+class AccountNotFoundError(PipelineError):
+    """아이디 찾기(POST /api/auth/find-account)에 등록되지 않은 이메일이 왔다.
+
+    이 엔드포인트는 "이 이메일로 가입된 아이디가 뭐야?"에 답하는 게 목적이라,
+    다른 인증 엔드포인트와 달리 존재 여부를 굳이 숨기지 않는다.
+    """
+
+    code = "ACCOUNT_NOT_FOUND"
+    status = 404
+    message = "등록된 이메일이 아니에요."
+
+
+class AccountEmailMismatchError(PipelineError):
+    """비밀번호 재설정(POST /api/auth/reset-password)에서 account/email 조합이
+
+    DB 와 안 맞는다. 어느 쪽이 틀렸는지는 구분하지 않는다 — 구분하면 존재하는
+    아이디를 이메일 대입으로 알아낼 수 있다(계정 존재 여부 열거).
+    """
+
+    code = "ACCOUNT_EMAIL_MISMATCH"
+    status = 401
+    message = "아이디 또는 이메일이 올바르지 않아요."
+
+
+class UnauthorizedError(PipelineError):
+    """Authorization 헤더가 없거나 JWT 가 유효하지 않다(서명 불일치·만료 포함)."""
+
+    code = "UNAUTHORIZED"
+    status = 401
+    message = "로그인이 필요해요."
+
+
+class NotFoundError(PipelineError):
+    """요청한 리소스가 없거나 로그인한 사용자 소유가 아니다.
+
+    둘을 구분하지 않는다 — 남의 friend_id/meal_id 를 넣어봐서 "존재는 하지만
+    내 것이 아님"과 "아예 없음"을 구분당하면 다른 사용자의 리소스 ID 존재 여부를
+    추측당할 수 있다.
+    """
+
+    code = "NOT_FOUND"
+    status = 404
+    message = "찾을 수 없어요."
+
+
+# ---------------------------------------------------------------------------
 # 대화(WS /doll/talk) 전용
 #
 # ⚠️ WebSocket 은 main.py 의 @app.exception_handler(PipelineError) 를 **타지 않는다.**

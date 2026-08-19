@@ -15,12 +15,17 @@ uvicorn[standard]==0.52.1
 python-multipart==0.0.32   # multipart 파싱. 빠뜨리면 업로드가 500 으로 죽는다
 
 pillow==12.3.0
-numpy==2.5.2
+# numpy==2.5.2 없는 버전
+numpy==2.4.6 # 가장 최신
 scipy==1.18.0              # cutout.py 의 label / binary_fill_holes / gaussian_filter
 rembg==2.0.78              # 사전 누끼 (isnet-general-use)
 onnxruntime==1.28.0        # rembg 추론 백엔드
 
 google-genai==2.17.0       # Gemini
+
+pymysql==1.1.1              # MySQL 연결
+bcrypt==4.3.0                # 비밀번호 해싱
+pyjwt==2.10.1                # 로그인 토큰
 
 # 결과 PNG 는 서버 디스크에 저장한다(가비아 VM 은 디스크가 영속).
 # 클라우드 오브젝트 스토리지 SDK 는 쓰지 않으므로 의존성도 두지 않는다.
