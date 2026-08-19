@@ -181,7 +181,12 @@ def post_json(url: str, headers: dict, payload: dict, timeout=60):
 def _gemini_client():
     from google import genai
 
-    key = os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY")
+    # ⚠️ .strip() 을 빼면 안 된다. server/live.py 가 이 함수로 Live 클라이언트를 만드는데,
+    #    .env 를 python-dotenv 로 읽는 로컬과 달리 **Docker --env-file 은 `=` 뒤의 공백을
+    #    값에 그대로 포함시킨다.** 키에 공백이 하나 붙으면 대화만 인증에 실패하고,
+    #    /healthz 의 api_key 는 config.py 가 strip 한 값을 보므로 true 로 나온다.
+    #    "stylize 는 되는데 대화만 죽는" 상태라 엉뚱하게 Live 쪽을 의심하게 된다.
+    key = (os.environ.get("GEMINI_API_KEY") or os.environ.get("GOOGLE_API_KEY") or "").strip()
     if not key:
         raise RuntimeError("GEMINI_API_KEY 없음 (.env 확인)")
     return genai.Client(api_key=key)

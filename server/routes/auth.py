@@ -54,7 +54,6 @@ _DUMMY_HASH = bcrypt.hashpw(b"dummy-password-for-timing-safety", bcrypt.gensalt(
 class SignupRequest(BaseModel):
     account: str
     password: str
-    password_confirm: str
     email: str
     name: str
     age: int
@@ -139,9 +138,6 @@ def _make_token(user_id: int, account: str) -> str:
 
 @router.post("/api/auth/signup", status_code=204)
 async def signup(body: SignupRequest) -> None:
-    if body.password != body.password_confirm:
-        raise PasswordMismatchError()
-
     # bcrypt 해싱은 의도적으로 무거운(느린) 연산이라 이벤트 루프를 막는다.
     # DB 접속(pymysql, 동기)도 마찬가지라 같이 스레드로 뺀다.
     password_hash = await asyncio.to_thread(

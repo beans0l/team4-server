@@ -139,6 +139,22 @@ async def _unexpected(request: Request, exc: Exception):
     return _error(500, "INTERNAL", "알 수 없는 오류가 발생했어요.")
 
 
+@app.get("/")
+async def root():
+    """제출한 서버 주소를 브라우저로 열었을 때 보이는 안내.
+
+    이게 없으면 루트가 404 {"detail":"Not Found"} 라서, 서버가 멀쩡히 떠 있는데도
+    주소를 잘못 받았거나 죽은 것처럼 보인다. API 서버라 동작상 문제는 아니지만
+    심사·시연에서 이 주소를 그대로 여는 사람이 있다.
+    """
+    return {
+        "service": "인형 AI 서버",
+        "status": "running",
+        "docs": "/docs",
+        "health": "/healthz",
+    }
+
+
 @app.get("/healthz")
 async def healthz():
     return {
