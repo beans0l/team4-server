@@ -1,9 +1,11 @@
 """POST /api/auth/signup — 회원가입. POST /api/auth/login — 로그인(JWT 발급).
 
-회원가입은 아이디(account) / 비밀번호 / 비밀번호 확인 / 이메일 / 이름 / 나이 / 키워드를
+회원가입은 아이디(username) / 비밀번호 / 이메일 / 이름 / 나이 / 키워드를
 받는다. keyword 는 회원가입 폼에 미리 정해둔 10개 중 하나가 그대로 넘어온다 —
 서버는 값을 고르지 않고 받은 그대로 저장한다. 비밀번호는 평문으로 저장하지 않고
-bcrypt 로 해싱한 뒤 DB 에 넣는다. 성공해도 응답 본문은 없다(204).
+bcrypt 로 해싱한 뒤 DB 에 넣는다. 가입에 성공하면 **login 과 동일한 응답**
+(`{"token", "user_id"}`)을 바로 돌려준다 — 방금 만든 계정으로 로그인을 한 번 더
+시키지 않기 위해서다.
 
 로그인은 아이디 / 비밀번호를 받아 DB 의 해시와 대조하고, 맞으면 JWT 를 돌려준다.
 서명 키(config.JWT_SECRET)는 .env 에서 랜덤한 값으로 채워야 한다 — 비어 있으면
@@ -51,8 +53,13 @@ router = APIRouter(tags=["auth"])
 _DUMMY_HASH = bcrypt.hashpw(b"dummy-password-for-timing-safety", bcrypt.gensalt()).decode()
 
 
+# ⚠️ signup/login 의 요청 필드만 username 이고, DB 컬럼과 나머지 엔드포인트
+#    (find-account 응답 / reset-password 요청 / users.me)는 아직 account 다.
+#    앱이 실제로 쓰는 두 곳만 앱 DTO 이름에 맞춘 상태이며, 나머지는 앱에 DTO 가
+#    생길 때 같이 맞춘다. 이 파일 안에서 body.username → account 로 넘어가는
+#    지점(_insert_user / _fetch_user / _make_token 호출부)이 그 경계다.
 class SignupRequest(BaseModel):
-    account: str
+    username: str
     password: str
     email: str
     name: str
@@ -61,7 +68,7 @@ class SignupRequest(BaseModel):
 
 
 class LoginRequest(BaseModel):
-    account: str
+    username: str
     password: str
 
 
@@ -83,13 +90,16 @@ def _insert_user(
     name: str,
     age: int,
     keyword: str,
-) -> None:
+) -> int:
+    """새로 만든 user 의 id 를 돌려준다 — 가입 직후 토큰을 발급하는 데 필요하다."""
     with db.get_cursor() as cur:
         cur.execute(
             "INSERT INTO users (account, password_hash, email, name, age, keyword) "
             "VALUES (%s, %s, %s, %s, %s, %s)",
             (account, password_hash, email, name, age, keyword),
         )
+        # lastrowid 는 커서에 딸린 값이라 with 블록을 벗어나면 못 읽는다.
+        return cur.lastrowid
 
 
 def _fetch_user(account: str) -> dict | None:
@@ -136,8 +146,8 @@ def _make_token(user_id: int, account: str) -> str:
     return jwt.encode(payload, config.JWT_SECRET, algorithm=config.JWT_ALGORITHM)
 
 
-@router.post("/api/auth/signup", status_code=204)
-async def signup(body: SignupRequest) -> None:
+@router.post("/api/auth/signup")
+async def signup(body: SignupRequest) -> dict:
     # bcrypt 해싱은 의도적으로 무거운(느린) 연산이라 이벤트 루프를 막는다.
     # DB 접속(pymysql, 동기)도 마찬가지라 같이 스레드로 뺀다.
     password_hash = await asyncio.to_thread(
@@ -145,9 +155,9 @@ async def signup(body: SignupRequest) -> None:
     )
 
     try:
-        await asyncio.to_thread(
+        user_id = await asyncio.to_thread(
             _insert_user,
-            body.account,
+            body.username,
             password_hash,
             body.email,
             body.name,
@@ -157,10 +167,16 @@ async def signup(body: SignupRequest) -> None:
     except pymysql.err.IntegrityError:
         raise DuplicateUserError()
 
+    # 🔴 204(본문 없음)로 두면 앱이 가입 직후 로그인 화면으로 되돌아가야 한다.
+    #    가입 성공은 "방금 본인이 만든 자격증명을 알고 있다"가 증명된 상태이므로
+    #    login 과 똑같은 토큰을 여기서 바로 발급한다.
+    token = await asyncio.to_thread(_make_token, user_id, body.username)
+    return {"token": token, "user_id": user_id}
+
 
 @router.post("/api/auth/login")
 async def login(body: LoginRequest) -> dict:
-    user = await asyncio.to_thread(_fetch_user, body.account)
+    user = await asyncio.to_thread(_fetch_user, body.username)
 
     # 아이디가 없어도 bcrypt.checkpw 를 더미 해시로 한 번 돌린다. 그냥 바로
     # 401 을 던지면 "아이디 없음"이 "비밀번호 틀림"보다 훨씬 빨리 응답해서,
@@ -172,8 +188,10 @@ async def login(body: LoginRequest) -> dict:
     if not user or not ok:
         raise InvalidCredentialsError()
 
-    token = await asyncio.to_thread(_make_token, user["id"], body.account)
-    return {"token": token}
+    # signup 과 응답 형태를 똑같이 맞춘다. 앱이 두 경로를 하나의 "로그인됨" 상태로
+    # 처리할 수 있어야 가입 직후 자동 로그인이 특수 케이스가 되지 않는다.
+    token = await asyncio.to_thread(_make_token, user["id"], body.username)
+    return {"token": token, "user_id": user["id"]}
 
 
 @router.post("/api/auth/find-account")
