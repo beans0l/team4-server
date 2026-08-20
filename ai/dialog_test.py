@@ -114,14 +114,6 @@ SITUATION = {
 - 아이와 함께 밥을 먹고 있어.
 - 밥을 강요하지 않는다. 놀이처럼 유도한다.
 - 음식 이야기를 자연스럽게 꺼내도 된다.""",
-    # 목표는 meal 에만 붙는다. 놀기 화면에서는 밥 목표를 꺼낼 이유가 없다.
-    #
-    # 🔴 억제 규칙이 없으면 매 문장마다 "당근 먹었어?" 를 물고 늘어진다.
-    #    관심사(interests) 에서 이미 겪은 문제이고, R7(응답이 길다)이 미해결이라
-    #    목표까지 주면 그 경향이 더 심해진다.
-    "_goal_meal": """- 오늘 아이가 하기로 한 것: {goal}
-- 이건 아이가 스스로 하도록 놀이처럼 유도만 한다.
-  먼저 확인하듯 묻지 않고, 할 말이 없을 때만 한 번씩 꺼낸다.""",
     "play": """지금 상황:
 - 아이와 놀고 있어. 밥 먹는 시간이 아니야.
 - **밥·음식 이야기를 먼저 꺼내지 않는다.** 아이가 꺼내면 받아준다.
@@ -196,7 +188,6 @@ def build_persona(
     interests=(),
     base: str = "",
     mode: str = DEFAULT_MODE,
-    goal: str = "",
 ) -> str:
     """페르소나 전문. base 뒤에 상황 블록과 프로필 블록을 붙인다.
 
@@ -206,16 +197,10 @@ def build_persona(
     """
     # 빈 줄로 띄운다 — 각 블록은 앞 절에 이어지는 항목이 아니라 별도 절이다.
     # (머리말 없이 붙이면 `하지 않는 것:` 목록의 일부로 읽힌다. persona_profile_block 참조)
-    situation = SITUATION.get(mode, SITUATION[DEFAULT_MODE])
-    # 오늘의 목표는 밥 먹기 상황에만 붙인다. 같은 절에 이어지는 항목이라
-    # 빈 줄 없이 바로 잇는다(별도 절로 띄우면 상황과 무관해 보인다).
-    if goal and mode == DEFAULT_MODE:
-        situation += "\n" + SITUATION["_goal_meal"].format(goal=goal)
-
     return "\n\n".join(
         [
             base or PERSONA_BASE,
-            situation,
+            SITUATION.get(mode, SITUATION[DEFAULT_MODE]),
             persona_profile_block(
                 doll_name=doll_name,
                 child_name=child_name,

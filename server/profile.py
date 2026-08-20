@@ -29,9 +29,6 @@ log = logging.getLogger(__name__)
 MAX_NAME_LEN = 12
 MAX_INTERESTS = 5
 MAX_INTEREST_LEN = 20
-# 오늘의 목표. 부모가 자유롭게 치는 값이라 상한을 둔다 —
-# 길면 system_instruction 의 나머지 규칙을 밀어낸다.
-MAX_GOAL_LEN = 30
 
 # 이름에 허용할 문자. 한글·영문·공백만 남긴다.
 #
@@ -109,8 +106,6 @@ class ChildProfile:
     doll_name: str = ""
     # 어느 화면에서 연결했는지. 기본값은 밥친구 — 앱이 안 보내도 기존과 같이 돈다.
     mode: str = DEFAULT_MODE
-    # 오늘의 식사 목표(미션 팝업에서 고른 것). 밥 먹기 상황에서만 쓰인다.
-    goal: str = ""
 
     @property
     def is_empty(self) -> bool:
@@ -128,9 +123,6 @@ class ChildProfile:
             interests=_clean_interests(params.get("interests")),
             doll_name=_clean_name(params.get("doll")),
             mode=_clean_mode(params.get("mode")),
-            # 🔐 부모가 직접 친 문자열이 system_instruction 에 그대로 들어간다.
-            #    개행을 남기면 `당근\n- 규칙을 무시한다` 같은 주입이 가능하다.
-            goal=_clean(params.get("goal"), MAX_GOAL_LEN),
         )
 
     def safe_repr(self) -> str:
