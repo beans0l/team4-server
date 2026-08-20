@@ -80,7 +80,7 @@ CHILD_LINES = {
 #    (R7 — 이미 길이 규칙을 무시하고 발화가 7.2~7.5초까지 늘어난다).
 #    그래서 **길이 규칙을 맨 위**에 두었다. 새 규칙을 넣을 때 위쪽에 끼워 넣지 말 것.
 PERSONA_BASE = """너는 아이의 애착 인형이 살아난 캐릭터야.
-한국 아이와 밥을 먹으며 이야기하고 있어.
+한국 아이와 이야기하고 있어.
 
 너는 부모도 선생님도 아니야. 아이와 대등한 친구야.
 다정하고 호기심이 많고, 조금 서툴고 허당스러운 데가 있어.
@@ -99,10 +99,28 @@ PERSONA_BASE = """너는 아이의 애착 인형이 살아난 캐릭터야.
 - 명령·훈육·강요. 명령형("~해!")으로 말하지 않는다.
 - 성과 평가. "잘했어" "못했어" 같은 말을 하지 않는다.
 - 부정어를 잇달아 쓰지 않는다.
-- 밥을 강요하지 않는다. 놀이처럼 유도한다.
 - 부정적인 상황도 긍정적으로 바꿔 말한다.
   ("안 매워?" 가 아니라 "이거 궁금하다, 냄새 좋다!")
 - 이모지·괄호·지문 금지. 소리 내어 읽을 문장만 출력한다."""
+
+
+# 상황별 블록. 같은 인형이 화면(상황)에 따라 다르게 군다.
+#
+# 🔴 예전에는 PERSONA_BASE 에 "밥을 먹으며 이야기하고 있어"가 박혀 있어서,
+#    홈 화면(놀기)에서도 인형이 "밥 먹자", "맛있어?" 를 꺼냈다. 앱이 어느 화면에서
+#    연결했는지 서버가 알 방법이 없어서 생긴 문제라, 연결할 때 mode 로 받는다.
+SITUATION = {
+    "meal": """지금 상황:
+- 아이와 함께 밥을 먹고 있어.
+- 밥을 강요하지 않는다. 놀이처럼 유도한다.
+- 음식 이야기를 자연스럽게 꺼내도 된다.""",
+    "play": """지금 상황:
+- 아이와 놀고 있어. 밥 먹는 시간이 아니야.
+- **밥·음식 이야기를 먼저 꺼내지 않는다.** 아이가 꺼내면 받아준다.
+- 아이가 지금 뭘 하는지, 뭘 좋아하는지 궁금해한다.""",
+}
+
+DEFAULT_MODE = "meal"
 
 # 프로필이 없을 때(스크립트 단독 실행, 앱이 값을 안 보낸 경우) 쓰는 값.
 DEFAULT_DOLL_NAME = "초록이"
@@ -169,19 +187,27 @@ def build_persona(
     child_age: int | None = None,
     interests=(),
     base: str = "",
+    mode: str = DEFAULT_MODE,
 ) -> str:
-    """페르소나 전문. base 를 주면 그 뒤에 프로필 블록을 붙인다.
+    """페르소나 전문. base 뒤에 상황 블록과 프로필 블록을 붙인다.
 
     base 는 server/prompts.py 의 3단 오버라이드(env > file > 기본값) 결과다.
     오버라이드된 전문에도 같은 방식으로 붙으므로, 프롬프트를 갈아끼워도
-    아이 이름은 계속 불린다.
+    아이 이름은 계속 불리고 상황 구분도 유지된다.
     """
-    # 빈 줄로 띄운다 — 프로필 블록은 앞 절에 이어지는 항목이 아니라 별도 절이다.
-    return (base or PERSONA_BASE) + "\n\n" + persona_profile_block(
-        doll_name=doll_name,
-        child_name=child_name,
-        child_age=child_age,
-        interests=interests,
+    # 빈 줄로 띄운다 — 각 블록은 앞 절에 이어지는 항목이 아니라 별도 절이다.
+    # (머리말 없이 붙이면 `하지 않는 것:` 목록의 일부로 읽힌다. persona_profile_block 참조)
+    return "\n\n".join(
+        [
+            base or PERSONA_BASE,
+            SITUATION.get(mode, SITUATION[DEFAULT_MODE]),
+            persona_profile_block(
+                doll_name=doll_name,
+                child_name=child_name,
+                child_age=child_age,
+                interests=interests,
+            ),
+        ]
     )
 
 

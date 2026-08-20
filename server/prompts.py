@@ -148,6 +148,7 @@ def render_persona(profile=None) -> str:
         child_name=profile.child_name,
         child_age=profile.child_age,
         interests=profile.interests,
+        mode=profile.mode,
     )
 
 

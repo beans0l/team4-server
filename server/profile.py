@@ -20,7 +20,7 @@ import logging
 import re
 from dataclasses import dataclass, field
 
-from ai.dialog_test import DEFAULT_CHILD_AGE
+from ai.dialog_test import DEFAULT_CHILD_AGE, DEFAULT_MODE, SITUATION
 
 log = logging.getLogger(__name__)
 
@@ -60,6 +60,15 @@ def _clean_name(raw: str | None) -> str:
     return _clean(_NAME_ALLOWED.sub(" ", raw), MAX_NAME_LEN)
 
 
+def _clean_mode(raw: str | None) -> str:
+    """아는 값만 통과시킨다.
+
+    이 값은 system_instruction 에 들어갈 블록을 고르는 열쇠다. 모르는 값을 그대로
+    쓰면 프롬프트에 장난 문구가 섞이므로, 목록에 없으면 기본값으로 되돌린다.
+    """
+    return raw if raw in SITUATION else DEFAULT_MODE
+
+
 def _clean_age(raw: str | None) -> int | None:
     if not raw:
         return None
@@ -95,6 +104,8 @@ class ChildProfile:
     child_age: int | None = None
     interests: tuple[str, ...] = field(default_factory=tuple)
     doll_name: str = ""
+    # 어느 화면에서 연결했는지. 기본값은 밥친구 — 앱이 안 보내도 기존과 같이 돈다.
+    mode: str = DEFAULT_MODE
 
     @property
     def is_empty(self) -> bool:
@@ -111,6 +122,7 @@ class ChildProfile:
             child_age=_clean_age(params.get("age")),
             interests=_clean_interests(params.get("interests")),
             doll_name=_clean_name(params.get("doll")),
+            mode=_clean_mode(params.get("mode")),
         )
 
     def safe_repr(self) -> str:
