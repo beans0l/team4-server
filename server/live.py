@@ -283,30 +283,46 @@ class LiveSession:
 
             # ── 수신 ──────────────────────────────────────────────────
             try:
-                async for msg in self._session.receive():
-                    self.usage.add(getattr(msg, "usage_metadata", None))
+                # 🔴 receive() 는 **한 턴이 끝나면 정상 종료한다.** 세션이 죽은 게 아니라
+                #    "이번 턴은 여기까지"라는 뜻이고, 다음 턴은 다시 부르면 된다.
+                #
+                #    이걸 세션 종료로 오해하면 매 턴마다 재연결하게 되고, 그러면 인형이
+                #    **대화를 통째로 잊는다.** 실측에서 turn_complete 직후 1초마다
+                #    session_reset 이 찍혔다(3턴 모두). 재연결 뒤에도 대화가 멀쩡히
+                #    이어진 것이 연결 자체는 살아 있었다는 증거다.
+                while True:
+                    received_any = False
 
-                    sc = getattr(msg, "server_content", None)
-                    if sc is not None:
-                        tr = getattr(sc, "output_transcription", None)
-                        if tr is not None and tr.text:
-                            yield ("transcript", tr.text)
+                    async for msg in self._session.receive():
+                        received_any = True
+                        self.usage.add(getattr(msg, "usage_metadata", None))
 
-                    # 오디오는 msg.data 로 온다(server_content 밖이다).
-                    if getattr(msg, "data", None):
-                        yield ("audio", msg.data)
+                        sc = getattr(msg, "server_content", None)
+                        if sc is not None:
+                            tr = getattr(sc, "output_transcription", None)
+                            if tr is not None and tr.text:
+                                yield ("transcript", tr.text)
 
-                    if sc is not None and getattr(sc, "turn_complete", False):
-                        self.usage.turns += 1
-                        yield ("turn_complete", None)
+                        # 오디오는 msg.data 로 온다(server_content 밖이다).
+                        if getattr(msg, "data", None):
+                            yield ("audio", msg.data)
+
+                        if sc is not None and getattr(sc, "turn_complete", False):
+                            self.usage.turns += 1
+                            yield ("turn_complete", None)
+
+                    # 아무것도 못 받고 끝났으면 그때는 진짜 세션이 닫힌 것이다.
+                    # (턴 사이에는 receive() 가 다음 메시지를 기다리며 블록하므로
+                    #  이 루프가 CPU 를 태우지 않는다.)
+                    if not received_any:
+                        break
             except asyncio.CancelledError:
                 # 앱이 끊어서 상위가 태스크를 취소한 것이다. 재연결하면 안 된다.
                 raise
             except Exception as e:
                 log.warning("Live 수신 중단: %s", e)
             else:
-                # receive() 가 예외 없이 끝난 것도 세션 종료다. Live 는 세션 수명
-                # 상한이 있어서, 긴 대화에서는 오히려 이쪽으로 끝나는 게 정상이다.
+                # Live 는 세션 수명 상한이 있어서, 긴 대화에서는 이쪽으로 끝나는 게 정상이다.
                 log.info("Live 세션이 서버 쪽에서 닫힘")
 
             # ── 재연결 ────────────────────────────────────────────────
