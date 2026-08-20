@@ -11,7 +11,10 @@ CREATE TABLE IF NOT EXISTS users (
     email         VARCHAR(255) UNIQUE,
     name          VARCHAR(30),
     age           INT,
-    keyword       VARCHAR(30),
+    -- 관심사를 `공룡,딸기,딸기우유` 처럼 쉼표로 이어 담는다. 30 자였을 때는
+    -- 관심사 3~4 개에서 MySQL 이 경고만 내고 **조용히 잘랐다** — 앱에는 200 이
+    -- 나가서 사용자는 왜 관심사가 사라졌는지 알 수 없었다.
+    keyword       VARCHAR(200),
     created_at    TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 

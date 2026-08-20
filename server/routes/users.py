@@ -30,6 +30,24 @@ log = logging.getLogger(__name__)
 router = APIRouter(prefix="/api/users", tags=["users"])
 
 
+class NameUpdate(BaseModel):
+    """PATCH /me/name 전용. 앱이 보내는 모양 그대로다."""
+
+    name: str
+
+
+class KeywordUpdate(BaseModel):
+    """PATCH /me/keyword 전용.
+
+    🔴 앱은 **배열**로 보내는데(`{"keyword": ["공룡","딸기"]}`) 컬럼은 문자열이다.
+       어느 한쪽이 변환해야 하는데 서버가 한다 — 앱을 고치면 재설치가 필요하고,
+       변환 규칙(쉼표 구분)은 어차피 서버가 정하는 것이다.
+    문자열로 보내는 클라이언트(curl·스크립트)도 받아준다.
+    """
+
+    keyword: list[str] | str
+
+
 class ProfileUpdate(BaseModel):
     current_password: str | None = None
     account: str | None = None
@@ -68,6 +86,35 @@ def _update_user(user_id: int, fields: dict) -> None:
 
 @router.get("/me")
 async def get_profile(user_id: int = Depends(get_current_user_id)) -> dict:
+    return await asyncio.to_thread(_fetch_profile, user_id)
+
+
+@router.patch("/me/name")
+async def update_name(
+    body: NameUpdate, user_id: int = Depends(get_current_user_id)
+) -> dict:
+    """아이 이름만 바꾼다(설정 → 이름 변경).
+
+    PATCH /me 로도 되지만 앱이 이 경로를 부르고 있어서 맞춰 둔다. 자격증명
+    (account/password)을 건드리지 않으므로 current_password 를 요구하지 않는다.
+    """
+    await asyncio.to_thread(_update_user, user_id, {"name": body.name})
+    return await asyncio.to_thread(_fetch_profile, user_id)
+
+
+@router.patch("/me/keyword")
+async def update_keyword(
+    body: KeywordUpdate, user_id: int = Depends(get_current_user_id)
+) -> dict:
+    """관심사만 바꾼다(설정 → 관심사 변경).
+
+    ⚠️ 컬럼이 좁으면(초기 스키마는 VARCHAR(30)) 관심사 3~4개에서 **조용히 잘린다.**
+       MySQL 이 기본 설정에서 경고만 내고 자르기 때문에 앱에는 200 이 나가고
+       사용자는 왜 관심사가 사라졌는지 알 수 없다. 컬럼을 넓혀 둘 것.
+    """
+    raw = body.keyword
+    keyword = ",".join(k.strip() for k in raw if k.strip()) if isinstance(raw, list) else raw
+    await asyncio.to_thread(_update_user, user_id, {"keyword": keyword})
     return await asyncio.to_thread(_fetch_profile, user_id)
 
 

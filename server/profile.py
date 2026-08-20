@@ -4,13 +4,24 @@
                                                           │
                                                           └─> system_instruction
 
-**서버는 회원 DB 를 조회하지 않는다.** 앱이 연결할 때 값을 실어 보낸다.
+📌 **2026-08-20 개정 — 서버가 회원 DB 를 조회한다.** 아래 기록은 낡았다.
 
-    이유 ① AI 서버에 유저 테이블·토큰 검증을 붙이면 팀원의 인증 백엔드와
-           결합이 생긴다. 스키마가 바뀔 때마다 이쪽이 같이 깨진다.
-    이유 ② 앱은 로그인 직후 이미 이 값들을 갖고 있다. 서버가 다시 조회하는 건
-           한 바퀴 도는 것이다.
-    이유 ③ 서버가 무상태로 남으면 재배포·재연결에 아무 영향이 없다.
+    옛 결정은 "앱이 실어 보낸다" 였고 근거는 ① AI 서버가 팀원의 인증 백엔드와
+    결합되는 것을 피한다 ② 앱은 로그인 직후 이미 값을 갖고 있다 ③ 무상태 유지,
+    였다. **①의 전제가 사라졌다** — 지금은 FastAPI 하나·DB 하나이고
+    routes/talk.py 는 이미 토큰을 검증해 user_id 를 쓴다.
+
+    **②는 사실이 아니었다.** 앱의 ChildProfileStore.save() 가 어디에서도 불리지
+    않아서(SignUpScreen 의 콜백이 인자 없는 () -> Unit 으로 되돌아갔다) 값이 늘
+    비어 있었다. 그 결과 인형이 아이 이름을 한 번도 부르지 못했고, 서버 로그의
+    `child_name=없음 interests=0개` 가 몇 주 동안 정상처럼 보였다.
+    정작 DB 에는 회원가입 때 받은 이름·나이·관심사가 다 들어 있었다.
+
+    → 이름·나이·관심사는 **DB 가 단일 출처**다. 쿼리로 오면 그쪽을 우선한다
+      (talk_client 로 다른 값을 넣어 시험할 수 있어야 하므로).
+
+    ⚠️ goals(오늘의 목표)만은 여전히 앱이 실어 보낸다. goal_tags 는 '자주 쓰는
+       문구 사전'이라 오늘 무엇을 골랐는지 DB 에서 알 수 없기 때문이다.
 
 🔐 개인정보다. **아이 이름을 로그에 남기지 않는다** — 서버 로그는 팀 전체가 보고,
    시연 중 화면에 띄우기도 한다. 로깅에는 safe_repr() 를 쓸 것.
@@ -18,7 +29,7 @@
 
 import logging
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 from ai.dialog_test import DEFAULT_CHILD_AGE, DEFAULT_MODE, SITUATION
 
@@ -78,12 +89,18 @@ def _clean_mode(raw: str | None) -> str:
     return raw if raw in SITUATION else DEFAULT_MODE
 
 
-def _clean_age(raw: str | None) -> int | None:
-    if not raw:
+def _clean_age(raw) -> int | None:
+    """쿼리스트링('4')과 DB 컬럼(int 4)을 둘 다 받는다.
+
+    ⚠️ 예전에는 `raw.strip()` 을 먼저 불러서 **int 가 오면 AttributeError 로 조용히
+       버려졌다.** DB 조회를 붙이는 순간 나이가 늘 기본값(4살)으로 떨어지는데,
+       마침 기본값이 4라서 눈으로는 정상으로 보인다.
+    """
+    if raw is None or raw == "":
         return None
     try:
-        age = int(raw.strip())
-    except (ValueError, AttributeError):
+        age = int(str(raw).strip())
+    except (ValueError, TypeError):
         return None
     return age if MIN_AGE <= age <= MAX_AGE else None
 
@@ -142,6 +159,28 @@ class ChildProfile:
             doll_name=_clean_name(params.get("doll")),
             mode=_clean_mode(params.get("mode")),
             goals=_clean_csv(params.get("goals"), MAX_GOALS, MAX_GOAL_LEN),
+        )
+
+    def with_db_defaults(self, row) -> "ChildProfile":
+        """회원 DB 에서 읽은 값으로 **빈 자리만** 채운다.
+
+        🔴 쿼리가 이긴다. DB 를 우선하면 talk_client 의 --child/--age/--interests 로
+           다른 값을 넣어 시험할 수 없어진다 — 인형 이름 발음을 미리 들어보는
+           것처럼, 실제 회원 정보와 다른 값으로 확인해야 하는 경우가 있다.
+
+        row 가 없어도(회원 조회 실패·탈퇴) 정상이다. 그때는 그대로 돌려준다 —
+        프로필이 없다고 대화를 거절하면 안 된다.
+        """
+        if not row:
+            return self
+        return replace(
+            self,
+            child_name=self.child_name or _clean_name(row.get("name")),
+            child_age=self.child_age or _clean_age(row.get("age")),
+            # DB 의 keyword 는 `공룡,딸기` 형태의 쉼표 문자열이다. 회원가입에서
+            # 앱이 그렇게 저장한다(SignUpScreen 의 joinToString).
+            interests=self.interests
+            or _clean_csv(row.get("keyword"), MAX_INTERESTS, MAX_INTEREST_LEN),
         )
 
     def safe_repr(self) -> str:

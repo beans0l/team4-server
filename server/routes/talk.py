@@ -88,6 +88,17 @@ _CLOSE_TRY_LATER = 1013
 _CLOSE_UNAUTHORIZED = 1008  # policy violation
 
 
+def _fetch_child_fields(user_id: int) -> dict | None:
+    """페르소나에 쓸 세 값만 읽는다.
+
+    🔐 account·email·password_hash 는 가져오지 않는다. 필요 없는 개인정보를
+       메모리에 올리면 예외 로그나 디버깅 출력에 딸려 나갈 수 있다.
+    """
+    with db.get_cursor() as cur:
+        cur.execute("SELECT name, age, keyword FROM users WHERE id = %s", (user_id,))
+        return cur.fetchone()
+
+
 def _save_talk_session(
     user_id: int, transcript: list[str], started_at: datetime, ended_at: datetime
 ) -> None:
@@ -233,6 +244,18 @@ async def talk(ws: WebSocket):
     # 🔐 프로필에는 아이 이름이 들어 있다. 로그에는 safe_repr() 만 남긴다 —
     #    서버 로그는 팀 전체가 보고 시연 중 화면에 띄우기도 한다.
     profile = ChildProfile.from_query(ws.query_params)
+
+    # 쿼리에 없는 값은 회원 DB 에서 채운다(2026-08-20. 근거는 server/profile.py).
+    # 앱이 아이 이름·나이·관심사를 안 보내고 있어서 인형이 한 번도 이름을 부르지
+    # 못했는데, 정작 회원가입 때 받은 값이 DB 에 그대로 있었다.
+    #
+    # ⚠️ 조회 실패로 대화를 막지 않는다. 프로필이 없어도 기본 페르소나로 도는 것이
+    #    정상 경로다 — 인형이 이름을 못 부르는 것보다 대화가 안 되는 게 나쁘다.
+    try:
+        row = await asyncio.to_thread(_fetch_child_fields, user_id)
+        profile = profile.with_db_defaults(row)
+    except Exception:
+        log.exception("회원 프로필 조회 실패 — 기본값으로 진행 (user_id=%d)", user_id)
 
     await ws.accept()
     log.info(
