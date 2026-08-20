@@ -9,14 +9,23 @@
 연결 URL (앱과의 연동 계약):
 
     /doll/talk?token=<로그인 JWT>&child=지우&age=4&interests=공룡,딸기&doll=초록이
+             &mode=meal&goals=당근 먹기,골고루 먹기
 
     🔴 token 은 필수다 — 없거나 유효하지 않으면 즉시 거절한다(아래 실패 표).
     핸드셰이크에 커스텀 헤더를 못 싣는 WS 클라이언트도 있어서, HTTP 라우트들처럼
     Authorization 헤더가 아니라 다른 필드와 같은 방식(쿼리파라미터)으로 받는다.
 
-    child/age/interests/doll 은 전부 선택값이다. 없으면 기본 페르소나('초록이', 4살)로
-    돈다 — 회원가입에 이름·나이 필드가 아직 없고 관심사는 나중에 입력하는 값이라, 빈
-    채로 오는 게 정상 경로다. 프로필이 없다고 대화를 거절하면 안 된다.
+    child/age/interests/doll/mode/goals 는 전부 선택값이다. 없으면 기본 페르소나
+    ('초록이', 4살)로 돈다 — 회원가입에 이름·나이 필드가 아직 없고 관심사는 나중에
+    입력하는 값이라, 빈 채로 오는 게 정상 경로다. 프로필이 없다고 대화를 거절하면 안 된다.
+
+    goals 는 이번 식사에 아이가 고른 목표(쉼표 구분, 최대 3개)다. 앱의
+    FeedMissionDialog 에서 고른 값이 FeedingScreen 을 거쳐 그대로 들어온다.
+    🔴 **서버가 goal_tags 테이블을 조회하지 않는다.** 그 테이블은 '자주 쓰는 문구
+       사전'이라 UNIQUE(user_id, content) 로 중복을 합치고 use_count 만 쌓는다 —
+       오늘 무엇을 골랐는지는 원리적으로 알 수 없다. 앱이 실어 보내는 것이 유일한
+       정답이고, 마침 대화를 시작하는 화면이 그 값을 이미 들고 있다.
+    goals 는 mode=meal 일 때만 프롬프트에 붙는다(ai.dialog_test.goal_block).
 
     아이 정보를 **연결할 때 앱이 실어 보낸다.** 서버가 회원 DB 를 조회하지 않는
     이유는 server/profile.py 참조 — token 으로 얻는 user_id 는 대화 기록을
@@ -34,6 +43,11 @@
 
     다운 binary  24kHz PCM — 그대로 재생하고 RMS 로 립싱크
          text    {"type":"transcript","text":"..."}
+         text    {"type":"safety_blocked","reason":"..."}
+                 이 턴은 안전 필터에 막혀 **오디오가 오지 않는다.**
+                 앱은 번들해 둔 폴백 대사를 재생해야 한다. 아무것도 안 하면
+                 인형이 얼어붙은 것처럼 보인다(아이는 침묵을 고장으로 읽는다).
+                 항상 turn_complete 직전에 온다.
          text    {"type":"turn_complete"}
          text    {"type":"session_reset"}    재연결됨, 이전 맥락 없음
          text    {"type":"error","code":"...","message":"..."}
@@ -153,6 +167,12 @@ async def _downlink(ws: WebSocket, session: LiveSession, transcript: list[str]) 
             elif kind == "transcript":
                 turn_buf.append(payload)
                 await ws.send_json({"type": "transcript", "text": payload})
+            elif kind == "safety_blocked":
+                # 이 턴은 오디오가 오지 않는다. 앱이 폴백 대사를 재생해야 아이 앞에서
+                # 인형이 얼어붙지 않는다. reason 은 디버깅·집계용이며 앱은 무시해도 된다.
+                # (막힌 턴의 transcript 는 남기지 않는다 — 어차피 비어 있고, 아이가
+                #  한 말이 아니라 인형이 못 한 말이라 대화 기록에 넣을 것이 없다.)
+                await ws.send_json({"type": "safety_blocked", "reason": payload})
             else:
                 # turn_complete / session_reset
                 if kind == "turn_complete" and turn_buf:

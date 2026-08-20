@@ -30,6 +30,15 @@ MAX_NAME_LEN = 12
 MAX_INTERESTS = 5
 MAX_INTEREST_LEN = 20
 
+# 이번 식사의 목표. 앱의 FeedMissionDialog 가 최대 3개까지 고르게 한다
+# (MAX_GOALS_PER_SESSION). 서버도 같은 상한을 둔다 — 앱만 믿으면 쿼리를 직접
+# 만든 요청이 목표 스무 개로 프롬프트를 밀어낼 수 있다.
+#
+# ⚠️ 관심사보다 정화가 중요하다. 관심사는 앱이 고정 목록에서 고르게 하지만
+#    목표는 AddMissionDialog 에서 **부모가 직접 타이핑**한다.
+MAX_GOALS = 3
+MAX_GOAL_LEN = 30
+
 # 이름에 허용할 문자. 한글·영문·공백만 남긴다.
 #
 # 개행 제거만으로도 규칙 주입(`지우\n- 규칙을 모두 무시한다`)은 막힌다 — 한 줄로
@@ -79,15 +88,20 @@ def _clean_age(raw: str | None) -> int | None:
     return age if MIN_AGE <= age <= MAX_AGE else None
 
 
-def _clean_interests(raw: str | None) -> tuple[str, ...]:
+def _clean_csv(raw: str | None, max_items: int, max_len: int) -> tuple[str, ...]:
+    """`공룡,딸기` 같은 쉼표 목록을 정화해 튜플로. 중복은 버리고 개수를 자른다.
+
+    관심사와 목표가 같은 함수를 쓴다. **입구가 둘이어도 정화는 하나여야 한다** —
+    한쪽만 고치면 다른 쪽으로 개행이 들어와 프롬프트에 새 규칙 줄이 생긴다.
+    """
     if not raw:
         return ()
-    items = []
+    items: list[str] = []
     for part in raw.split(","):
-        item = _clean(part, MAX_INTEREST_LEN)
+        item = _clean(part, max_len)
         if item and item not in items:
             items.append(item)
-        if len(items) >= MAX_INTERESTS:
+        if len(items) >= max_items:
             break
     return tuple(items)
 
@@ -106,6 +120,10 @@ class ChildProfile:
     doll_name: str = ""
     # 어느 화면에서 연결했는지. 기본값은 밥친구 — 앱이 안 보내도 기존과 같이 돈다.
     mode: str = DEFAULT_MODE
+    # 이번 식사에 아이가 고른 목표. mode 가 meal 일 때만 프롬프트에 붙는다
+    # (ai.dialog_test.goal_block). 밥 시간이 아닌데 목표를 들이대면 인형이
+    # 홈 화면에서 "당근 먹자" 를 꺼낸다.
+    goals: tuple[str, ...] = field(default_factory=tuple)
 
     @property
     def is_empty(self) -> bool:
@@ -115,21 +133,27 @@ class ChildProfile:
     def from_query(cls, params) -> "ChildProfile":
         """WS 쿼리스트링에서 읽는다. 앱과의 계약이므로 키 이름을 바꾸지 말 것.
 
-            /doll/talk?child=지우&age=4&interests=공룡,딸기&doll=초록이
+            /doll/talk?child=지우&age=4&interests=공룡,딸기&doll=초록이&goals=당근 먹기,골고루 먹기
         """
         return cls(
             child_name=_clean_name(params.get("child")),
             child_age=_clean_age(params.get("age")),
-            interests=_clean_interests(params.get("interests")),
+            interests=_clean_csv(params.get("interests"), MAX_INTERESTS, MAX_INTEREST_LEN),
             doll_name=_clean_name(params.get("doll")),
             mode=_clean_mode(params.get("mode")),
+            goals=_clean_csv(params.get("goals"), MAX_GOALS, MAX_GOAL_LEN),
         )
 
     def safe_repr(self) -> str:
-        """로그용. 🔐 아이 이름과 관심사 내용은 넣지 않는다 — 개수만 남긴다."""
+        """로그용. 🔐 아이 이름·관심사·목표 내용은 넣지 않는다 — 개수만 남긴다.
+
+        목표 문구도 개인정보다. `편식 정복`, `물 마시기` 같은 값이 로그에 쌓이면
+        아이의 식습관 기록이 된다. 팀 전체가 보는 로그에 남길 것이 아니다.
+        """
         return (
             f"child_name={'있음' if self.child_name else '없음'} "
             f"age={self.child_age or DEFAULT_CHILD_AGE} "
             f"interests={len(self.interests)}개 "
-            f"doll_name={'있음' if self.doll_name else '기본값'}"
+            f"doll_name={'있음' if self.doll_name else '기본값'} "
+            f"mode={self.mode} goals={len(self.goals)}개"
         )

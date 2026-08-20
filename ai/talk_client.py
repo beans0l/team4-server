@@ -243,7 +243,7 @@ async def run_talk(url: str, wav: Path, soak_sec: float, realtime: bool) -> int:
 
 
 def _with_profile(url: str, args) -> str:
-    """--token/--child/--age/--interests/--doll 을 쿼리스트링으로 붙인다.
+    """--token/--child/--age/--interests/--doll/--mode/--goals 를 쿼리스트링으로 붙인다.
 
     한글이 그대로 들어가면 서버에 따라 깨지므로 반드시 percent-encoding 한다.
     앱(OkHttp)도 같은 방식으로 인코딩해야 한다.
@@ -256,6 +256,8 @@ def _with_profile(url: str, args) -> str:
         "age": args.age,
         "interests": args.interests,
         "doll": args.doll,
+        "mode": args.mode,
+        "goals": args.goals,
     }
     query = urlencode({k: v for k, v in fields.items() if v})
     if not query:
@@ -283,6 +285,10 @@ def main() -> int:
     p.add_argument("--age", help="아이 나이 (예: 4)")
     p.add_argument("--interests", help="관심사, 쉼표 구분 (예: 공룡,딸기)")
     p.add_argument("--doll", help="인형 이름 (예: 초록이)")
+    p.add_argument("--mode", help="화면 상황: meal(밥 먹기) / play(놀기). 기본 meal")
+    # ⚠️ --mode play 로 두면 목표는 프롬프트에 안 붙는다(의도된 동작).
+    #    목표가 반영되는지 볼 때는 --mode 를 비우거나 meal 로 둘 것.
+    p.add_argument("--goals", help="오늘의 목표, 쉼표 구분 최대 3개 (예: 당근 먹기,골고루 먹기)")
     args = p.parse_args()
 
     url = _with_profile(args.url, args)

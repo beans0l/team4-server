@@ -26,6 +26,7 @@ import logging
 import time
 from contextlib import AsyncExitStack
 
+from ai.dialog_test import is_blocked_reason
 from ai.tts_test import _gemini_client
 from server import config
 from server.errors import LiveUnavailableError
@@ -67,6 +68,13 @@ def _live_config(persona: str):
         realtime_input_config=types.RealtimeInputConfig(
             automatic_activity_detection=types.AutomaticActivityDetection(disabled=True)
         ),
+        # 🔴 ④ safety_settings 는 **넣으면 안 된다.** Live API 가 받지 않아서
+        #    연결 단계에서 죽는다 (실측 2026-08-20):
+        #      1007 Invalid JSON payload ... Unknown name "safetySettings" at 'setup'
+        #    SDK 의 LiveConnectConfig 에는 필드가 있어서 코드는 멀쩡해 보이고,
+        #    조립 테스트도 통과한다. **실호출해야만 드러난다.**
+        #    유해 콘텐츠 방어는 페르소나의 `안전:` 절과 아래 차단 감지가 맡는다.
+        #    (Gemini 내장 기본 필터는 계속 동작한다 — 끌 수 없을 뿐이다)
     )
 
 
@@ -90,6 +98,9 @@ class Usage:
         self.total_sum = 0
         self.last_max = 0
         self.turns = 0
+        # 안전 필터에 막힌 턴 수. 과차단(=인형이 침묵한 횟수)을 재는 유일한 값이다.
+        # turns 대비 비율이 높으면 SAFETY_LEVEL 을 풀어야 한다.
+        self.blocked_turns = 0
         self.by_modality: dict[str, int] = {}
 
     def add(self, meta) -> None:
@@ -115,6 +126,7 @@ class Usage:
         return {
             "seconds": round(elapsed, 1),
             "turns": self.turns,
+            "blocked_turns": self.blocked_turns,
             "total_sum": self.total_sum,
             "last_max": self.last_max,
             # 이 두 값의 차이가 위 ⚠️ 의 판정 재료다.
@@ -249,6 +261,7 @@ class LiveSession:
         yield 하는 것:
             ("audio",      bytes)   24kHz PCM. 그대로 앱에 넘긴다
             ("transcript", str)     인형이 한 말(조각). 이어붙이면 한 문장이 된다
+            ("safety_blocked", str) 이 턴은 막혔다 — 오디오가 없다. 앱이 폴백 재생
             ("turn_complete", None) 한 턴 끝
             ("session_reset", None) 재연결됨 — 이전 맥락이 사라졌다
 
@@ -292,6 +305,8 @@ class LiveSession:
                 #    이어진 것이 연결 자체는 살아 있었다는 증거다.
                 while True:
                     received_any = False
+                    # 이번 턴에 오디오가 실제로 왔는지. 차단된 턴은 0 이다.
+                    turn_audio = 0
 
                     async for msg in self._session.receive():
                         received_any = True
@@ -305,11 +320,45 @@ class LiveSession:
 
                         # 오디오는 msg.data 로 온다(server_content 밖이다).
                         if getattr(msg, "data", None):
+                            turn_audio += len(msg.data)
                             yield ("audio", msg.data)
 
                         if sc is not None and getattr(sc, "turn_complete", False):
                             self.usage.turns += 1
+
+                            # 🔴 안전 필터에 막힌 턴은 **오디오가 한 조각도 오지 않는다.**
+                            #    그냥 turn_complete 만 넘기면 앱은 재생할 게 없어서
+                            #    인형이 얼어붙은 것처럼 보인다. 아이는 1초 넘는 침묵을
+                            #    "인형이 죽었다"로 받아들인다(과제 4 의 전제) — 유해
+                            #    응답을 막았는데 그 대가로 인형을 죽이면 남는 게 없다.
+                            #    앱이 폴백 대사를 재생하도록 별도 프레임을 먼저 보낸다.
+                            reason = getattr(sc, "turn_complete_reason", None)
+                            blocked = is_blocked_reason(reason)
+
+                            # reason 없이 조용한 턴도 앱 입장에서는 똑같은 침묵이다.
+                            # ⚠️ 이 분기는 실측으로 확인하지 못했다(차단을 유발해 본 적이
+                            #    없다). 정상인데 오디오가 0인 턴이 있다면 여기서 폴백이
+                            #    잘못 나가므로, 로그의 reason= 값을 보고 조정할 것.
+                            if not blocked and turn_audio == 0:
+                                log.warning(
+                                    "오디오 없이 끝난 턴 — reason=%s (폴백으로 메운다)",
+                                    reason,
+                                )
+                                blocked = True
+
+                            if blocked:
+                                name = (
+                                    getattr(reason, "name", None) or str(reason or "SILENT")
+                                )
+                                log.info("턴이 막힘 — reason=%s", name)
+                                self.usage.blocked_turns += 1
+                                # turn_complete 보다 **먼저** 보낸다. 앱은 turn_complete
+                                # 에서 재생을 마무리하므로 순서가 뒤집히면 폴백을 끼워
+                                # 넣을 자리가 없다.
+                                yield ("safety_blocked", name)
+
                             yield ("turn_complete", None)
+                            turn_audio = 0
 
                     # 아무것도 못 받고 끝났으면 그때는 진짜 세션이 닫힌 것이다.
                     # (턴 사이에는 receive() 가 다음 메시지를 기다리며 블록하므로

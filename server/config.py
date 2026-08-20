@@ -57,6 +57,16 @@ LIVE_MODEL = os.environ.get("LIVE_MODEL", "gemini-3.1-flash-live-preview")
 # 인형을 여러 개 등록하면 인형마다 다른 이름을 배정해 목소리를 구분할 수 있다.
 DOLL_VOICE = os.environ.get("DOLL_VOICE", "Leda")
 
+# 유해 콘텐츠 필터 강도. `child`(기본) / `strict` / `default`(Gemini 기본값).
+# 정의는 ai/dialog_test.py 의 SAFETY_LEVELS — 스크립트와 서버가 같은 값을 써야
+# 검증한 것이 곧 앱에 나가는 것이 된다.
+#
+# 🔴 조인다고 안전해지기만 하는 게 아니다. 차단된 턴은 **오디오가 0바이트**라
+#    인형이 침묵한다. 아이는 그걸 "인형이 죽었다"로 받아들인다. 그래서 차단은
+#    live.py 가 잡아 앱에 safety_blocked 를 보내고, 앱이 폴백 대사로 메운다.
+#    이 세 가지는 한 세트다 — 하나만 켜지 말 것.
+SAFETY_LEVEL = os.environ.get("SAFETY_LEVEL", "child").strip() or "child"
+
 # 동시 대화 세션 수. 한 세션이 밥 한 끼(약 18분) 내내 연결을 붙들고 있고
 # Live 는 오디오를 상시 스트리밍하므로, stylize 와 달리 **크레딧**이 병목이다.
 # 🔴 R5(Live 비용)가 아직 미측정이다. 실측 전에는 올리지 말 것.
