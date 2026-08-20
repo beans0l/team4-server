@@ -326,24 +326,24 @@ class LiveSession:
                         if sc is not None and getattr(sc, "turn_complete", False):
                             self.usage.turns += 1
 
-                            # 🔴 안전 필터에 막힌 턴은 **오디오가 한 조각도 오지 않는다.**
-                            #    그냥 turn_complete 만 넘기면 앱은 재생할 게 없어서
-                            #    인형이 얼어붙은 것처럼 보인다. 아이는 1초 넘는 침묵을
-                            #    "인형이 죽었다"로 받아들인다(과제 4 의 전제) — 유해
-                            #    응답을 막았는데 그 대가로 인형을 죽이면 남는 게 없다.
-                            #    앱이 폴백 대사를 재생하도록 별도 프레임을 먼저 보낸다.
+                            # 안전 필터에 막힌 턴은 **오디오가 한 조각도 오지 않는다.**
+                            # 앱은 그 턴에 아무 소리도 내지 않는다 — 폴백 재생은
+                            # 만들지 않기로 했다(2026-08-20. 실측에서 차단 0/7 이라
+                            # 거의 실행되지 않는 코드가 된다).
+                            #
+                            # 🔴 **그래도 이 감지는 지우지 말 것.** blocked_turns 가
+                            #    차단이 실제로 나는지 아는 유일한 수단이다. 없으면
+                            #    시연에서 인형이 침묵했을 때 원인이 차단인지 네트워크인지
+                            #    구분할 방법이 없다. 폴백을 나중에 붙일 자리이기도 하다.
                             reason = getattr(sc, "turn_complete_reason", None)
                             blocked = is_blocked_reason(reason)
 
-                            # reason 없이 조용한 턴도 앱 입장에서는 똑같은 침묵이다.
+                            # reason 없이 조용한 턴도 아이 입장에서는 똑같은 침묵이다.
                             # ⚠️ 이 분기는 실측으로 확인하지 못했다(차단을 유발해 본 적이
-                            #    없다). 정상인데 오디오가 0인 턴이 있다면 여기서 폴백이
-                            #    잘못 나가므로, 로그의 reason= 값을 보고 조정할 것.
+                            #    없다). 정상인데 오디오가 0인 턴이 있다면 차단으로 잘못
+                            #    집계되므로, 로그의 reason= 값을 보고 조정할 것.
                             if not blocked and turn_audio == 0:
-                                log.warning(
-                                    "오디오 없이 끝난 턴 — reason=%s (폴백으로 메운다)",
-                                    reason,
-                                )
+                                log.warning("오디오 없이 끝난 턴 — reason=%s", reason)
                                 blocked = True
 
                             if blocked:
@@ -352,9 +352,9 @@ class LiveSession:
                                 )
                                 log.info("턴이 막힘 — reason=%s", name)
                                 self.usage.blocked_turns += 1
-                                # turn_complete 보다 **먼저** 보낸다. 앱은 turn_complete
-                                # 에서 재생을 마무리하므로 순서가 뒤집히면 폴백을 끼워
-                                # 넣을 자리가 없다.
+                                # turn_complete 보다 **먼저** 보낸다. 폴백을 나중에
+                                # 붙인다면 앱이 turn_complete 에서 재생을 마무리하므로,
+                                # 순서가 뒤집히면 끼워 넣을 자리가 없어진다.
                                 yield ("safety_blocked", name)
 
                             yield ("turn_complete", None)

@@ -45,8 +45,9 @@
          text    {"type":"transcript","text":"..."}
          text    {"type":"safety_blocked","reason":"..."}
                  이 턴은 안전 필터에 막혀 **오디오가 오지 않는다.**
-                 앱은 번들해 둔 폴백 대사를 재생해야 한다. 아무것도 안 하면
-                 인형이 얼어붙은 것처럼 보인다(아이는 침묵을 고장으로 읽는다).
+                 앱은 이 프레임을 무시한다 — 차단된 턴에서는 인형이 침묵한다
+                 (2026-08-20 결정. 실측에서 차단 0/7 이라 폴백이 거의 안 쓰인다).
+                 서버가 계속 보내는 이유는 로그·계측(Usage.blocked_turns)이다.
                  항상 turn_complete 직전에 온다.
          text    {"type":"turn_complete"}
          text    {"type":"session_reset"}    재연결됨, 이전 맥락 없음
@@ -168,8 +169,10 @@ async def _downlink(ws: WebSocket, session: LiveSession, transcript: list[str]) 
                 turn_buf.append(payload)
                 await ws.send_json({"type": "transcript", "text": payload})
             elif kind == "safety_blocked":
-                # 이 턴은 오디오가 오지 않는다. 앱이 폴백 대사를 재생해야 아이 앞에서
-                # 인형이 얼어붙지 않는다. reason 은 디버깅·집계용이며 앱은 무시해도 된다.
+                # 이 턴은 오디오가 오지 않는다. **앱은 이 프레임을 무시한다** —
+                # 차단된 턴에서는 인형이 침묵하게 두기로 했다(2026-08-20).
+                # 그래도 보내는 이유는 앱 로그에 원인이 남기 때문이다. 없으면
+                # 침묵의 원인이 차단인지 네트워크인지 앱 쪽에서 구분할 수 없다.
                 # (막힌 턴의 transcript 는 남기지 않는다 — 어차피 비어 있고, 아이가
                 #  한 말이 아니라 인형이 못 한 말이라 대화 기록에 넣을 것이 없다.)
                 await ws.send_json({"type": "safety_blocked", "reason": payload})
